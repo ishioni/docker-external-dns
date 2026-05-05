@@ -1,0 +1,166 @@
+package plan
+
+import (
+	"testing"
+
+	"github.com/movishell/docker-external-dns/internal/provider/unifi"
+	"github.com/movishell/docker-external-dns/internal/registry"
+	"github.com/movishell/docker-external-dns/internal/source"
+)
+
+const ownerID = "us"
+
+// helpers for building inputs
+
+func endpoint(name, target string) *source.Endpoint {
+	return &source.Endpoint{
+		DNSName:    name,
+		Target:     target,
+		RecordType: "A",
+		OwnerID:    ownerID,
+		Resource:   "docker/" + name,
+	}
+}
+
+func aRecord(id, key, value string) unifi.DNSRecord {
+	return unifi.DNSRecord{ID: id, Key: key, RecordType: "A", Value: value}
+}
+
+func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
+	return unifi.DNSRecord{
+		ID:         id,
+		Key:        registry.TXTKey("A", hostname),
+		RecordType: "TXT",
+		Value:      registry.EncodeTXT(owner, "docker/"+hostname),
+	}
+}
+
+func TestCompute(t *testing.T) {
+	tests := []struct {
+		name       string
+		desired    []*source.Endpoint
+		current    []unifi.DNSRecord
+		wantCreate []string
+		wantUpdate []string
+		wantDelete []string
+	}{
+		{
+			name: "empty desired and current",
+		},
+		{
+			name:       "create new record",
+			desired:    []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
+			wantCreate: []string{"foo.example.com"},
+		},
+		{
+			name:    "no-op when desired matches owned current",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", ownerID),
+			},
+		},
+		{
+			name:    "update when desired target differs and we own the record",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.2")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", ownerID),
+			},
+			wantUpdate: []string{"foo.example.com"},
+		},
+		{
+			name:    "no update when target differs but no ownership TXT exists",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.2")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				// no TXT
+			},
+		},
+		{
+			name:    "no update when TXT belongs to a different owner",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.2")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", "someone-else"),
+			},
+		},
+		{
+			name: "delete owned record no longer desired",
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", ownerID),
+			},
+			wantDelete: []string{"foo.example.com"},
+		},
+		{
+			name: "do NOT delete unowned record (no companion TXT)",
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				// no TXT — created by someone external
+			},
+		},
+		{
+			name: "do NOT delete record owned by someone else",
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", "someone-else"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Compute(tt.desired, tt.current, ownerID)
+
+			gotCreate := dnsNames(got.Create)
+			gotUpdate := dnsNames(got.Update)
+			gotDelete := recordKeys(got.Delete)
+
+			if !sameSet(gotCreate, tt.wantCreate) {
+				t.Errorf("Create = %v, want %v", gotCreate, tt.wantCreate)
+			}
+			if !sameSet(gotUpdate, tt.wantUpdate) {
+				t.Errorf("Update = %v, want %v", gotUpdate, tt.wantUpdate)
+			}
+			if !sameSet(gotDelete, tt.wantDelete) {
+				t.Errorf("Delete = %v, want %v", gotDelete, tt.wantDelete)
+			}
+		})
+	}
+}
+
+func dnsNames(eps []*source.Endpoint) []string {
+	out := make([]string, len(eps))
+	for i, e := range eps {
+		out[i] = e.DNSName
+	}
+	return out
+}
+
+func recordKeys(rs []unifi.DNSRecord) []string {
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = r.Key
+	}
+	return out
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		m[s]--
+	}
+	for _, v := range m {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
