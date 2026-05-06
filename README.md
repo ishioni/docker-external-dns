@@ -11,22 +11,21 @@ the same UniFi controller.
 
 ## How it works
 
-1. Scans running containers for two labels: `traefik.enable=true` and
-   `external-dns.enabled=true`.
+1. Scans running containers opted in with `external-dns.enabled=true`.
 2. Extracts hostnames from `traefik.http.routers.<name>.rule: Host(\`...\`)` labels.
-3. Creates an **A record** (pointing at `TARGET_IP`) and a companion **TXT
-   ownership record** on UniFi for each hostname.
+3. Creates an **A** or **CNAME** record and a companion **TXT ownership record**
+   on UniFi for each hostname.
 4. Listens for Docker lifecycle events (start/stop/remove) and reconciles on a
    periodic interval — records are removed when containers disappear and new
    ones appear within seconds.
 
 ### Ownership safety
 
-For every managed A record at `foo.example.com`, a TXT record is created at
-`a-foo.example.com` with value:
+For every managed record at `foo.example.com`, a TXT record is created at
+`{record_type}-foo.example.com` with value:
 
 ```
-heritage=external-dns,external-dns/owner=<OWNER_ID>,external-dns/resource=docker/<container-name>
+heritage=external-dns,external-dns/owner=<TXT_OWNER>,external-dns/resource=docker/<container-name>
 ```
 
 Records **without** a matching ownership TXT are never touched — externally
@@ -38,7 +37,7 @@ created records are safe.
 # .env
 UNIFI_HOST=https://10.1.2.1
 UNIFI_API_KEY=<PAT from UniFi Network settings>
-TARGET_IP=10.1.2.241
+DEFAULT_TARGET_IP=10.1.2.241
 ```
 
 ```bash
@@ -51,10 +50,11 @@ docker compose up -d
 |---|---|---|
 | `UNIFI_HOST` | **required** | UniFi controller URL, e.g. `https://10.1.2.1` |
 | `UNIFI_API_KEY` | **required** | Personal Access Token from UniFi Network |
-| `TARGET_IP` | **required** | IP address all A records will point to |
+| `DEFAULT_TARGET_IP` | **required** | Default target used when labels do not override it |
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `UNIFI_INSECURE_SKIP_VERIFY` | `true` | Skip TLS verification (self-signed certs) |
-| `OWNER_ID` | `docker-external-dns` | Scopes TXT ownership; change if running multiple instances |
+| `TXT_OWNER` | `docker-external-dns` | Scopes TXT ownership; change if running multiple instances |
+| `TXT_PREFIX` | empty | Optional prefix for ownership TXT record names |
 | `RECONCILE_INTERVAL` | `5m` | How often to run a full reconcile |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_FORMAT` | `text` | `text` or `json` |
@@ -62,11 +62,10 @@ docker compose up -d
 
 ## Container labels
 
-Add both labels to any service you want managed:
+Add `external-dns.enabled=true` to any service you want managed:
 
 ```yaml
 labels:
-  traefik.enable: "true"
   external-dns.enabled: "true"
   traefik.http.routers.myapp.rule: Host(`myapp.example.com`)
   # ... other traefik labels
@@ -79,6 +78,26 @@ traefik.http.routers.myapp.rule: Host(`foo.example.com`) || Host(`bar.example.co
 ```
 
 `HostRegexp(...)` entries are skipped — they cannot be materialized into DNS records.
+
+Container-level overrides apply to every router from that container:
+
+```yaml
+labels:
+  external-dns.enabled: "true"
+  external-dns.target: "traefik.example.com"
+  external-dns.record-type: "CNAME"
+```
+
+Per-router overrides take precedence:
+
+```yaml
+labels:
+  external-dns.enabled: "true"
+  traefik.http.routers.s3.rule: Host(`bucket.example.com`)
+  traefik.http.routers.console.rule: Host(`console.example.com`)
+  external-dns.routers.console.record-type: "CNAME"
+  external-dns.routers.console.target: "traefik.example.com"
+```
 
 ## Getting a UniFi PAT
 

@@ -13,7 +13,7 @@ services:
     environment:
       UNIFI_HOST: ${UNIFI_HOST}
       UNIFI_API_KEY: ${UNIFI_API_KEY}
-      TARGET_IP: ${TARGET_IP}
+      DEFAULT_TARGET_IP: ${DEFAULT_TARGET_IP}
       UNIFI_SITE: ${UNIFI_SITE:-default}
       UNIFI_INSECURE_SKIP_VERIFY: ${UNIFI_INSECURE_SKIP_VERIFY:-true}
       TXT_OWNER: ${TXT_OWNER:-docker-external-dns}

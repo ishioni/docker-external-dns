@@ -22,12 +22,12 @@ type dockerClient interface {
 
 // DockerSource lists running containers and streams lifecycle events.
 type DockerSource struct {
-	cli      dockerClient
-	targetIP string
-	ownerID  string
+	cli           dockerClient
+	defaultTarget string
+	ownerID       string
 }
 
-func NewDockerSource(dockerHost, targetIP, ownerID string) (*DockerSource, error) {
+func NewDockerSource(dockerHost, defaultTarget, ownerID string) (*DockerSource, error) {
 	cli, err := client.NewClientWithOpts(
 		client.WithHost(dockerHost),
 		client.WithAPIVersionNegotiation(),
@@ -35,13 +35,13 @@ func NewDockerSource(dockerHost, targetIP, ownerID string) (*DockerSource, error
 	if err != nil {
 		return nil, err
 	}
-	return &DockerSource{cli: cli, targetIP: targetIP, ownerID: ownerID}, nil
+	return &DockerSource{cli: cli, defaultTarget: defaultTarget, ownerID: ownerID}, nil
 }
 
 // newDockerSourceWithClient constructs a DockerSource using an injected client.
 // Used by tests to supply a fake without a live Docker daemon.
-func newDockerSourceWithClient(cli dockerClient, targetIP, ownerID string) *DockerSource {
-	return &DockerSource{cli: cli, targetIP: targetIP, ownerID: ownerID}
+func newDockerSourceWithClient(cli dockerClient, defaultTarget, ownerID string) *DockerSource {
+	return &DockerSource{cli: cli, defaultTarget: defaultTarget, ownerID: ownerID}
 }
 
 // Endpoints returns the desired DNS endpoints from all currently running containers.
@@ -54,7 +54,7 @@ func (s *DockerSource) Endpoints(ctx context.Context) ([]*Endpoint, error) {
 	var all []*Endpoint
 	for _, c := range containers {
 		name := containerName(c)
-		eps := EndpointsFromLabels(name, c.Labels, s.targetIP, s.ownerID)
+		eps := EndpointsFromLabels(name, c.Labels, s.defaultTarget, s.ownerID)
 		if len(eps) > 0 {
 			slog.Debug("found endpoints for container", "container", name, "count", len(eps))
 		}

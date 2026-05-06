@@ -48,6 +48,67 @@ func TestHostnameFromTXTKey(t *testing.T) {
 	}
 }
 
+func TestParseTXTKey(t *testing.T) {
+	cases := []struct {
+		name               string
+		prefix, txtKey     string
+		wantType, wantHost string
+		wantOK             bool
+	}{
+		{
+			name:     "A without prefix",
+			txtKey:   "a-foo.example.com",
+			wantType: "A",
+			wantHost: "foo.example.com",
+			wantOK:   true,
+		},
+		{
+			name:     "CNAME without prefix",
+			txtKey:   "cname-foo.example.com",
+			wantType: "CNAME",
+			wantHost: "foo.example.com",
+			wantOK:   true,
+		},
+		{
+			name:     "A with prefix",
+			prefix:   "talos.",
+			txtKey:   "talos.a-foo.example.com",
+			wantType: "A",
+			wantHost: "foo.example.com",
+			wantOK:   true,
+		},
+		{
+			name:     "CNAME with prefix",
+			prefix:   "talos.",
+			txtKey:   "talos.cname-foo.example.com",
+			wantType: "CNAME",
+			wantHost: "foo.example.com",
+			wantOK:   true,
+		},
+		{
+			name:   "missing prefix",
+			prefix: "talos.",
+			txtKey: "a-foo.example.com",
+		},
+		{
+			name:   "missing dash",
+			txtKey: "afoo.example.com",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			gotType, gotHost, ok := ParseTXTKey(c.prefix, c.txtKey)
+			if ok != c.wantOK {
+				t.Fatalf("ParseTXTKey ok=%v, want %v", ok, c.wantOK)
+			}
+			if gotType != c.wantType || gotHost != c.wantHost {
+				t.Errorf("ParseTXTKey = (%q, %q), want (%q, %q)", gotType, gotHost, c.wantType, c.wantHost)
+			}
+		})
+	}
+}
+
 func TestEncodeTXT_IsQuoted(t *testing.T) {
 	got := EncodeTXT("owner-1", "docker/whoami")
 	if !strings.HasPrefix(got, `"`) || !strings.HasSuffix(got, `"`) {

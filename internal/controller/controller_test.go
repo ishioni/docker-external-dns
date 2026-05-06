@@ -111,10 +111,14 @@ func (f *fakeProvider) DeleteRecord(_ context.Context, id, key, recordType strin
 const testOwner = "us"
 
 func ep(name, target string) *source.Endpoint {
+	return epType(name, target, "A")
+}
+
+func epType(name, target, recordType string) *source.Endpoint {
 	return &source.Endpoint{
 		DNSName:    name,
 		Target:     target,
-		RecordType: "A",
+		RecordType: recordType,
 		OwnerID:    testOwner,
 		Resource:   "docker/" + name,
 	}
@@ -125,13 +129,17 @@ func aRec(id, key, value string) unifi.DNSRecord {
 }
 
 func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
-	return ownedTXTWithPrefix("", id, hostname, owner)
+	return ownedTXTType("", id, "A", hostname, owner)
 }
 
 func ownedTXTWithPrefix(prefix, id, hostname, owner string) unifi.DNSRecord {
+	return ownedTXTType(prefix, id, "A", hostname, owner)
+}
+
+func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecord {
 	return unifi.DNSRecord{
 		ID:         id,
-		Key:        registry.TXTKey(prefix, "A", hostname),
+		Key:        registry.TXTKey(prefix, recordType, hostname),
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(owner, "docker/"+hostname),
 	}
@@ -174,6 +182,27 @@ func TestReconcile_CreatesNewPair(t *testing.T) {
 	}
 	if countOp(prov.calls, "update") != 0 || countOp(prov.calls, "delete") != 0 {
 		t.Errorf("unexpected update/delete calls: %v", prov.calls)
+	}
+}
+
+func TestReconcile_CreatesCNAMEPair(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{epType("foo.example.com", "traefik.example.com", "CNAME")}}
+	prov := &fakeProvider{}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	creates := opKeys(prov.calls, "create")
+	if !containsAll(creates, []string{"foo.example.com", "cname-foo.example.com"}) {
+		t.Errorf("expected creates for CNAME and TXT, got %v", creates)
+	}
+	for _, c := range prov.calls {
+		if c.Op == "create" && c.Record.Key == "foo.example.com" {
+			if c.Record.RecordType != "CNAME" {
+				t.Errorf("RecordType = %q, want CNAME", c.Record.RecordType)
+			}
+			if c.Record.Value != "traefik.example.com" {
+				t.Errorf("Value = %q, want traefik.example.com", c.Record.Value)
+			}
+		}
 	}
 }
 

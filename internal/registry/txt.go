@@ -37,6 +37,20 @@ func HostnameFromTXTKey(prefix, recordType, txtKey string) (string, bool) {
 	return strings.CutPrefix(txtKey, expected)
 }
 
+// ParseTXTKey strips prefix from txtKey, then splits on the first '-' to
+// recover the upper-case record type and hostname.
+func ParseTXTKey(prefix, txtKey string) (recordType, hostname string, ok bool) {
+	rest, ok := strings.CutPrefix(txtKey, prefix)
+	if !ok {
+		return "", "", false
+	}
+	recordType, hostname, ok = strings.Cut(rest, "-")
+	if !ok || recordType == "" || hostname == "" {
+		return "", "", false
+	}
+	return strings.ToUpper(recordType), hostname, true
+}
+
 // EncodeTXT produces the TXT record value for an ownership record.
 // UniFi requires the value to be double-quoted when it contains commas.
 func EncodeTXT(ownerID, resource string) string {

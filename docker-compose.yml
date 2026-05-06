@@ -10,7 +10,7 @@ services:
       # Required
       UNIFI_HOST: ${UNIFI_HOST}         # e.g. https://10.1.2.1
       UNIFI_API_KEY: ${UNIFI_API_KEY}   # PAT from UniFi Network settings
-      TARGET_IP: ${TARGET_IP}           # IP all A records point to, e.g. 10.1.2.241
+      DEFAULT_TARGET_IP: ${DEFAULT_TARGET_IP} # default target for A records, e.g. 10.1.2.241
 
       # Optional (shown with defaults)
       UNIFI_SITE: ${UNIFI_SITE:-default}

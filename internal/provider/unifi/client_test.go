@@ -124,6 +124,26 @@ func TestCreateTXT_OmitsTTL(t *testing.T) {
 	}
 }
 
+func TestCreateCNAME_IncludesTTL(t *testing.T) {
+	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"_id":"cname-id","key":"foo.example.com","record_type":"CNAME","value":"traefik.example.com","ttl":300,"enabled":true}`))
+	})
+
+	_, err := client.CreateRecord(context.Background(), DNSRecord{
+		Key:        "foo.example.com",
+		RecordType: "CNAME",
+		Value:      "traefik.example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateRecord (CNAME): %v", err)
+	}
+
+	req := (*recorded)[0]
+	if ttl, ok := req.Body["ttl"]; !ok || ttl == nil {
+		t.Errorf("CNAME-record body missing ttl: %v", req.Body)
+	}
+}
+
 func TestUpdateRecord(t *testing.T) {
 	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"_id":"abc","key":"foo.example.com","record_type":"A","value":"10.0.0.2","enabled":true}`))

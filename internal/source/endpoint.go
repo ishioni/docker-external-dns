@@ -4,9 +4,9 @@ package source
 type Endpoint struct {
 	// DNSName is the fully-qualified hostname (e.g. "foo.example.com").
 	DNSName string
-	// Target is the IP address for A records.
+	// Target is the IP address for A records or hostname for CNAME records.
 	Target string
-	// RecordType is always "A" for now.
+	// RecordType is the DNS record type, currently "A" or "CNAME".
 	RecordType string
 	// OwnerID identifies the agent instance that owns this record.
 	OwnerID string

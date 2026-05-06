@@ -13,10 +13,14 @@ const ownerID = "us"
 // helpers for building inputs
 
 func endpoint(name, target string) *source.Endpoint {
+	return endpointType(name, target, "A")
+}
+
+func endpointType(name, target, recordType string) *source.Endpoint {
 	return &source.Endpoint{
 		DNSName:    name,
 		Target:     target,
-		RecordType: "A",
+		RecordType: recordType,
 		OwnerID:    ownerID,
 		Resource:   "docker/" + name,
 	}
@@ -26,14 +30,22 @@ func aRecord(id, key, value string) unifi.DNSRecord {
 	return unifi.DNSRecord{ID: id, Key: key, RecordType: "A", Value: value}
 }
 
+func cnameRecord(id, key, value string) unifi.DNSRecord {
+	return unifi.DNSRecord{ID: id, Key: key, RecordType: "CNAME", Value: value}
+}
+
 func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
-	return ownedTXTWithPrefix("", id, hostname, owner)
+	return ownedTXTType("", id, "A", hostname, owner)
 }
 
 func ownedTXTWithPrefix(prefix, id, hostname, owner string) unifi.DNSRecord {
+	return ownedTXTType(prefix, id, "A", hostname, owner)
+}
+
+func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecord {
 	return unifi.DNSRecord{
 		ID:         id,
-		Key:        registry.TXTKey(prefix, "A", hostname),
+		Key:        registry.TXTKey(prefix, recordType, hostname),
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(owner, "docker/"+hostname),
 	}
@@ -54,7 +66,7 @@ func TestCompute(t *testing.T) {
 		{
 			name:       "create new record",
 			desired:    []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
-			wantCreate: []string{"foo.example.com"},
+			wantCreate: []string{"A:foo.example.com"},
 		},
 		{
 			name:    "no-op when desired matches owned current",
@@ -71,7 +83,7 @@ func TestCompute(t *testing.T) {
 				aRecord("a1", "foo.example.com", "10.0.0.1"),
 				ownedTXT("t1", "foo.example.com", ownerID),
 			},
-			wantUpdate: []string{"foo.example.com"},
+			wantUpdate: []string{"A:foo.example.com"},
 		},
 		{
 			name:    "no update when target differs but no ownership TXT exists",
@@ -95,7 +107,7 @@ func TestCompute(t *testing.T) {
 				aRecord("a1", "foo.example.com", "10.0.0.1"),
 				ownedTXT("t1", "foo.example.com", ownerID),
 			},
-			wantDelete: []string{"foo.example.com"},
+			wantDelete: []string{"A:foo.example.com"},
 		},
 		{
 			name: "do NOT delete unowned record (no companion TXT)",
@@ -111,14 +123,59 @@ func TestCompute(t *testing.T) {
 				ownedTXT("t1", "foo.example.com", "someone-else"),
 			},
 		},
+		{
+			name:       "create CNAME from empty current",
+			desired:    []*source.Endpoint{endpointType("foo.example.com", "traefik.example.com", "CNAME")},
+			wantCreate: []string{"CNAME:foo.example.com"},
+		},
+		{
+			name:    "update owned CNAME when target changes",
+			desired: []*source.Endpoint{endpointType("foo.example.com", "new.example.com", "CNAME")},
+			current: []unifi.DNSRecord{
+				cnameRecord("c1", "foo.example.com", "old.example.com"),
+				ownedTXTType("", "t1", "CNAME", "foo.example.com", ownerID),
+			},
+			wantUpdate: []string{"CNAME:foo.example.com"},
+		},
+		{
+			name: "delete owned CNAME no longer desired",
+			current: []unifi.DNSRecord{
+				cnameRecord("c1", "foo.example.com", "old.example.com"),
+				ownedTXTType("", "t1", "CNAME", "foo.example.com", ownerID),
+			},
+			wantDelete: []string{"CNAME:foo.example.com"},
+		},
+		{
+			name: "A and CNAME for different hostnames coexist",
+			desired: []*source.Endpoint{
+				endpoint("a.example.com", "10.0.0.1"),
+				endpointType("c.example.com", "target.example.com", "CNAME"),
+			},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "a.example.com", "10.0.0.1"),
+				ownedTXT("t1", "a.example.com", ownerID),
+				cnameRecord("c1", "c.example.com", "target.example.com"),
+				ownedTXTType("", "t2", "CNAME", "c.example.com", ownerID),
+			},
+		},
+		{
+			name:    "record type flip deletes old A and creates new CNAME",
+			desired: []*source.Endpoint{endpointType("foo.example.com", "bar.example.com", "CNAME")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", ownerID),
+			},
+			wantCreate: []string{"CNAME:foo.example.com"},
+			wantDelete: []string{"A:foo.example.com"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := Compute(tt.desired, tt.current, ownerID, "")
 
-			gotCreate := dnsNames(got.Create)
-			gotUpdate := dnsNames(got.Update)
+			gotCreate := endpointKeys(got.Create)
+			gotUpdate := endpointKeys(got.Update)
 			gotDelete := recordKeys(got.Delete)
 
 			if !sameSet(gotCreate, tt.wantCreate) {
@@ -160,10 +217,18 @@ func dnsNames(eps []*source.Endpoint) []string {
 	return out
 }
 
+func endpointKeys(eps []*source.Endpoint) []string {
+	out := make([]string, len(eps))
+	for i, e := range eps {
+		out[i] = e.RecordType + ":" + e.DNSName
+	}
+	return out
+}
+
 func recordKeys(rs []unifi.DNSRecord) []string {
 	out := make([]string, len(rs))
 	for i, r := range rs {
-		out[i] = r.Key
+		out[i] = r.RecordType + ":" + r.Key
 	}
 	return out
 }

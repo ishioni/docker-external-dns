@@ -3,9 +3,9 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.4 — full automated test coverage (2026-05-06)
+## Status: v0.5 — CNAME and target override support (2026-05-07)
 
-The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test -race ./...`).
+The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, and per-Traefik-router target/type/skip overrides.
 
 Two real-world bugs were caught during manual testing and are now regression-guarded by tests:
 
@@ -49,11 +49,31 @@ Docker daemon → label parser → plan → UniFi static-DNS
 ## Key design decisions
 
 - **Auth**: X-Api-Key PAT only (UniFi Network 9.0+). No username/password fallback to keep the surface small. Add it later if needed.
-- **Record type**: A records only. CNAMEs excluded because they don't work with wildcard domains in UniFi.
-- **Opt-in labels**: Both `traefik.enable=true` AND `external-dns.enabled=true` must be set. This avoids accidentally managing services that only intend to use Traefik.
+- **Record type**: A and CNAME records are supported. The target field carries an IP for A records and a hostname for CNAME records; UniFi performs final validation.
+- **Opt-in labels**: Only `external-dns.enabled=true` is required. Hostname extraction still reads Traefik router rules, but `traefik.enable=true` is no longer a gate.
 - **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.ishioni.casa` lives at `talos.a-postgres.ishioni.casa`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
 - **Ownership safety**: Records without matching owner TXT are never deleted.
 - **Debounce**: Docker events are debounced 2s before triggering a reconcile to coalesce rapid restarts.
+
+## Label vocabulary
+
+Container-level defaults apply to all routers from the container:
+
+```yaml
+external-dns.enabled: "true"
+external-dns.target: "<ip-or-hostname>"
+external-dns.record-type: "A" # or "CNAME"
+```
+
+Per-router overrides are matched by router name from `traefik.http.routers.<name>.rule`:
+
+```yaml
+external-dns.routers.<name>.target: "<ip-or-hostname>"
+external-dns.routers.<name>.record-type: "A" # or "CNAME"
+external-dns.routers.<name>.skip: "true"
+```
+
+Precedence per router: per-router override → container-level → global default (`DEFAULT_TARGET_IP` / `A`).
 
 ## Wire format reference
 
@@ -76,11 +96,11 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 
 | Package | What it covers |
 |---|---|
-| `internal/source` | Label → endpoint extraction: enable-flag gating, single/multi `Host()`, `\|\|` joining, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging. |
-| `internal/registry` | `TXTKey` formatting, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
-| `internal/plan` | All Create/Update/Delete branches plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
-| `internal/provider/unifi` | HTTP wire format: list shape, `X-Api-Key` header, A includes `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, error propagation, dry-run makes no calls. |
-| `internal/controller` | Reconcile → apply flow: create/update/delete A+TXT pairs, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path. |
+| `internal/source` | Label → endpoint extraction: enable-flag gating, single/multi `Host()`, `\|\|` joining, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging, container/router target and record-type overrides, router skip. |
+| `internal/registry` | `TXTKey` and `ParseTXTKey` formatting/parsing, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
+| `internal/plan` | All Create/Update/Delete branches for A and CNAME plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
+| `internal/provider/unifi` | HTTP wire format: list shape, `X-Api-Key` header, A/CNAME include `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, error propagation, dry-run makes no calls. |
+| `internal/controller` | Reconcile → apply flow: create/update/delete record+TXT pairs, CNAME pair creation, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path. |
 | `internal/source` (docker) | Endpoints aggregation across multiple containers, name slash-stripping, ID fallback, list error propagation, event filter correctness, channel pass-through. |
 
 ## Known gaps / future work
@@ -88,10 +108,9 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 - [ ] **UniFi response validation**: first real deployment may reveal mismatches in
       JSON field casing (`Key` vs `key`). Check `_id` vs `id` in list vs create
       responses — UniFi sometimes returns different shapes.
-- [ ] **CNAME support**: add a per-container `external-dns.record-type=CNAME` label
-      and `external-dns.target=traefik.example.com` override once tested with UniFi.
-- [ ] **Per-container target override**: `external-dns.target=<ip>` label to override
-      the global `TARGET_IP` for a single container.
+- [ ] **Standalone non-Traefik hosts**: add explicit labels such as
+      `external-dns.hosts.<name>.*` for endpoints that do not have Traefik
+      router rules.
 - [ ] **Username/password fallback**: for UniFi Network < 9.0 PAT support. The
       kashalls webhook does CSRF-token refresh on each response — mirror that.
 - [ ] **Prometheus metrics**: `records_created_total`, `records_deleted_total`,

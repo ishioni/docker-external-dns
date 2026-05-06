@@ -11,12 +11,17 @@ import (
 
 // Changes holds the three buckets of DNS work to perform.
 type Changes struct {
-	// Create holds endpoints that don't yet have an A record in UniFi.
+	// Create holds endpoints that don't yet have a matching record in UniFi.
 	Create []*source.Endpoint
-	// Update holds endpoints whose A record exists but has a different target value.
+	// Update holds endpoints whose record exists but has a different target value.
 	Update []*source.Endpoint
-	// Delete holds A records owned by us that are no longer in the desired set.
+	// Delete holds A/CNAME records owned by us that are no longer in the desired set.
 	Delete []unifi.DNSRecord
+}
+
+type recordKey struct {
+	Hostname   string
+	RecordType string
 }
 
 // Compute diffs desired endpoints against the current UniFi records and
@@ -25,54 +30,56 @@ type Changes struct {
 // txtPrefix must match the value used when writing TXT keys (see registry.TXTKey).
 func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txtPrefix string) Changes {
 	// Build lookup maps from current records.
-	aByKey := make(map[string]unifi.DNSRecord) // key (hostname) → A record
+	aOrCnameByKey := make(map[recordKey]unifi.DNSRecord)
 	txtByKey := make(map[string]unifi.DNSRecord) // ownership TXT key → TXT record
 
 	for _, r := range current {
 		switch r.RecordType {
-		case "A":
-			aByKey[r.Key] = r
+		case "A", "CNAME":
+			aOrCnameByKey[recordKey{Hostname: r.Key, RecordType: r.RecordType}] = r
 		case "TXT":
 			txtByKey[r.Key] = r
 		}
 	}
 
-	// Index our ownership: set of A-record hostnames we own.
-	owned := make(map[string]bool)
+	// Index our ownership: set of record keys we own.
+	owned := make(map[recordKey]bool)
 	for _, txtRec := range txtByKey {
 		if registry.IsOwnedBy(txtRec.Value, ownerID) {
-			if hostname, ok := registry.HostnameFromTXTKey(txtPrefix, "A", txtRec.Key); ok {
-				owned[hostname] = true
+			recordType, hostname, ok := registry.ParseTXTKey(txtPrefix, txtRec.Key)
+			if ok {
+				owned[recordKey{Hostname: hostname, RecordType: recordType}] = true
 			}
 		}
 	}
 
-	// Build desired set indexed by hostname.
-	desiredByHost := make(map[string]*source.Endpoint, len(desired))
+	// Build desired set indexed by hostname and record type.
+	desiredByKey := make(map[recordKey]*source.Endpoint, len(desired))
 	for _, ep := range desired {
-		desiredByHost[ep.DNSName] = ep
+		desiredByKey[recordKey{Hostname: ep.DNSName, RecordType: ep.RecordType}] = ep
 	}
 
 	var changes Changes
 
 	// Determine creates and updates.
 	for _, ep := range desired {
-		existing, exists := aByKey[ep.DNSName]
+		key := recordKey{Hostname: ep.DNSName, RecordType: ep.RecordType}
+		existing, exists := aOrCnameByKey[key]
 		if !exists {
 			changes.Create = append(changes.Create, ep)
 		} else if existing.Value != ep.Target {
-			// Record exists but with wrong IP — update it only if we own it.
-			if owned[ep.DNSName] {
+			// Record exists but with wrong target — update it only if we own it.
+			if owned[key] {
 				changes.Update = append(changes.Update, ep)
 			}
 		}
 	}
 
-	// Determine deletes: owned records whose hostname is no longer desired.
-	for hostname := range owned {
-		if _, wanted := desiredByHost[hostname]; !wanted {
-			if aRec, ok := aByKey[hostname]; ok {
-				changes.Delete = append(changes.Delete, aRec)
+	// Determine deletes: owned records whose key is no longer desired.
+	for key := range owned {
+		if _, wanted := desiredByKey[key]; !wanted {
+			if rec, ok := aOrCnameByKey[key]; ok {
+				changes.Delete = append(changes.Delete, rec)
 			}
 		}
 	}
