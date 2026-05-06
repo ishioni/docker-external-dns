@@ -24,7 +24,7 @@ the same UniFi controller.
 For every managed record at `foo.example.com`, a TXT record is created at
 `{record_type}-foo.example.com` with value:
 
-```
+```text
 heritage=external-dns,external-dns/owner=<TXT_OWNER>,external-dns/resource=docker/<container-name>
 ```
 
@@ -47,7 +47,7 @@ docker compose up -d
 ## Configuration
 
 | Environment variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `UNIFI_HOST` | **required** | UniFi controller URL, e.g. `https://10.1.2.1` |
 | `UNIFI_API_KEY` | **required** | Personal Access Token from UniFi Network |
 | `DEFAULT_TARGET_IP` | **required** | Default target used when labels do not override it |
