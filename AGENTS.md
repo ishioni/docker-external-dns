@@ -3,9 +3,9 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.2 — manually verified end-to-end + automated test coverage (2026-05-05)
+## Status: v0.4 — full automated test coverage (2026-05-06)
 
-The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test ./...`).
+The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test -race ./...`).
 
 Two real-world bugs were caught during manual testing and are now regression-guarded by tests:
 
@@ -34,11 +34,14 @@ Docker daemon → label parser → plan → UniFi static-DNS
 | `internal/registry/txt.go` | external-dns-compatible TXT ownership encode/decode |
 | `internal/plan/plan.go` | Diffs desired vs current, produces Changes |
 | `internal/controller/controller.go` | Reconcile loop with event debounce + periodic ticker |
+| `internal/controller/types.go` | `Source` and `Provider` interfaces + domain `Event` type |
+| `internal/controller/controller_test.go` | Reconcile tests with in-process fakes + debounce test |
 | `Dockerfile` | Multi-stage build → scratch final image |
 | `docker-compose.yml` | Example deployment |
 | `docker-compose.mock.yml` | Local test stack: agent + traefik/whoami container |
 | `Makefile` | `make build / run / mock / docker-mock / test / vet` |
 | `internal/source/traefik_test.go` | Table tests for label → endpoint extraction |
+| `internal/source/docker_test.go` | Endpoints aggregation, name parsing, event filters |
 | `internal/registry/txt_test.go` | TXT encode/decode round-trip + ownership tests |
 | `internal/plan/plan_test.go` | Diff engine: create/update/delete + safety guards |
 | `internal/provider/unifi/client_test.go` | HTTP client tests via `httptest.NewServer` |
@@ -77,20 +80,11 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 | `internal/registry` | `TXTKey` formatting, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
 | `internal/plan` | All Create/Update/Delete branches plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
 | `internal/provider/unifi` | HTTP wire format: list shape, `X-Api-Key` header, A includes `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, error propagation, dry-run makes no calls. |
-
-Not yet covered (would need an interface refactor):
-
-- `internal/controller/controller.go` — full reconcile → apply flow. The controller currently depends on concrete `*source.DockerSource` and `*unifi.Client`. Extracting small interfaces (`Source.Endpoints`, `Provider.{List,Create,Update,Delete}Record`) would unlock a fake-backed reconcile test.
-- `internal/source/docker.go` — Docker daemon interaction. Same blocker.
+| `internal/controller` | Reconcile → apply flow: create/update/delete A+TXT pairs, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path. |
+| `internal/source` (docker) | Endpoints aggregation across multiple containers, name slash-stripping, ID fallback, list error propagation, event filter correctness, channel pass-through. |
 
 ## Known gaps / future work
 
-- [ ] **Controller-level reconcile test**: the seam needed for this is small —
-      define `type Source interface { Endpoints(ctx) ([]*Endpoint, error); Events(ctx) (...) }`
-      and `type Provider interface { ListRecords / CreateRecord / UpdateRecord / DeleteRecord }`,
-      then have `Controller` accept those instead of concrete types. With that
-      done, write a fake `Source` returning canned endpoints, a fake `Provider`
-      that records calls, and assert the calls produced by one reconcile cycle.
 - [ ] **UniFi response validation**: first real deployment may reveal mismatches in
       JSON field casing (`Key` vs `key`). Check `_id` vs `id` in list vs create
       responses — UniFi sometimes returns different shapes.
@@ -106,7 +100,7 @@ Not yet covered (would need an interface refactor):
       `RecordType` field propagated through the pipeline so adding them is trivial.
 - [ ] **Graceful cleanup on shutdown**: optionally delete all owned records when the
       agent exits (controlled by `CLEANUP_ON_EXIT` env var).
-- [ ] **CI**: add a GitHub Actions workflow (`go build`, `go vet`, `go test ./...`).
+- [x] **CI**: `.github/workflows/ci.yml` runs `go vet` + `go test -race` on PRs. `.github/workflows/release.yml` builds multi-arch Docker image (amd64 + arm64, native runners) and pushes to `ghcr.io/ishioni/docker-external-dns` when a `v*` tag is pushed.
 
 ## Dependency notes
 

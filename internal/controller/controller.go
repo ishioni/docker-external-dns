@@ -13,16 +13,16 @@ import (
 
 // Controller orchestrates the reconcile loop.
 type Controller struct {
-	docker   *source.DockerSource
-	unifi    *unifi.Client
+	source   Source
+	provider Provider
 	ownerID  string
 	interval time.Duration
 }
 
-func New(docker *source.DockerSource, unifi *unifi.Client, ownerID string, interval time.Duration) *Controller {
+func New(src Source, provider Provider, ownerID string, interval time.Duration) *Controller {
 	return &Controller{
-		docker:   docker,
-		unifi:    unifi,
+		source:   src,
+		provider: provider,
 		ownerID:  ownerID,
 		interval: interval,
 	}
@@ -38,7 +38,7 @@ func (c *Controller) Run(ctx context.Context) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	eventCh, errCh := c.docker.Events(ctx)
+	eventCh, errCh := c.source.Events(ctx)
 
 	// debounce: accumulate events for 2s before reconciling.
 	debounce := time.NewTimer(0)
@@ -53,11 +53,11 @@ func (c *Controller) Run(ctx context.Context) {
 
 		case msg, ok := <-eventCh:
 			if !ok {
-				slog.Warn("docker event stream closed, stopping event-driven reconciles")
+				slog.Warn("source event stream closed, stopping event-driven reconciles")
 				eventCh = nil
 				continue
 			}
-			slog.Debug("docker event received", "action", msg.Action, "container", msg.Actor.Attributes["name"])
+			slog.Debug("source event received", "action", msg.Action, "container", msg.Name)
 			if !pending {
 				debounce.Reset(2 * time.Second)
 				pending = true
@@ -69,7 +69,7 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			if err != nil && ctx.Err() == nil {
-				slog.Error("docker event stream error", "err", err)
+				slog.Error("source event stream error", "err", err)
 			}
 
 		case <-debounce.C:
@@ -84,21 +84,21 @@ func (c *Controller) Run(ctx context.Context) {
 	}
 }
 
-// reconcile fetches desired state from Docker and current state from UniFi,
-// computes the diff, and applies changes.
+// reconcile fetches desired state from the source and current state from the
+// provider, computes the diff, and applies changes.
 func (c *Controller) reconcile(ctx context.Context) {
 	log := slog.With("phase", "reconcile")
 
-	desired, err := c.docker.Endpoints(ctx)
+	desired, err := c.source.Endpoints(ctx)
 	if err != nil {
-		log.Error("failed to list docker endpoints", "err", err)
+		log.Error("failed to list source endpoints", "err", err)
 		return
 	}
 	log.Debug("desired endpoints", "count", len(desired))
 
-	current, err := c.unifi.ListRecords(ctx)
+	current, err := c.provider.ListRecords(ctx)
 	if err != nil {
-		log.Error("failed to list unifi records", "err", err)
+		log.Error("failed to list provider records", "err", err)
 		return
 	}
 
@@ -145,7 +145,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 }
 
 func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint) error {
-	_, err := c.unifi.CreateRecord(ctx, unifi.DNSRecord{
+	_, err := c.provider.CreateRecord(ctx, unifi.DNSRecord{
 		Key:        ep.DNSName,
 		RecordType: ep.RecordType,
 		Value:      ep.Target,
@@ -155,7 +155,7 @@ func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint) error 
 	}
 
 	txtKey := registry.TXTKey(ep.RecordType, ep.DNSName)
-	_, err = c.unifi.CreateRecord(ctx, unifi.DNSRecord{
+	_, err = c.provider.CreateRecord(ctx, unifi.DNSRecord{
 		Key:        txtKey,
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(ep.OwnerID, ep.Resource),
@@ -171,7 +171,7 @@ func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, curren
 		return c.createPair(ctx, ep)
 	}
 	aRec.Value = ep.Target
-	if _, err := c.unifi.UpdateRecord(ctx, *aRec); err != nil {
+	if _, err := c.provider.UpdateRecord(ctx, *aRec); err != nil {
 		return err
 	}
 
@@ -185,22 +185,22 @@ func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, curren
 	}
 	if txtRec != nil {
 		newTXT.ID = txtRec.ID
-		_, err := c.unifi.UpdateRecord(ctx, newTXT)
+		_, err := c.provider.UpdateRecord(ctx, newTXT)
 		return err
 	}
-	_, err := c.unifi.CreateRecord(ctx, newTXT)
+	_, err := c.provider.CreateRecord(ctx, newTXT)
 	return err
 }
 
 func (c *Controller) deletePair(ctx context.Context, aRec unifi.DNSRecord, current []unifi.DNSRecord) error {
-	if err := c.unifi.DeleteRecord(ctx, aRec.ID, aRec.Key, aRec.RecordType); err != nil {
+	if err := c.provider.DeleteRecord(ctx, aRec.ID, aRec.Key, aRec.RecordType); err != nil {
 		return err
 	}
 
 	txtKey := registry.TXTKey(aRec.RecordType, aRec.Key)
 	txtRec := findRecord(current, txtKey, "TXT")
 	if txtRec != nil {
-		return c.unifi.DeleteRecord(ctx, txtRec.ID, txtRec.Key, "TXT")
+		return c.provider.DeleteRecord(ctx, txtRec.ID, txtRec.Key, "TXT")
 	}
 	return nil
 }

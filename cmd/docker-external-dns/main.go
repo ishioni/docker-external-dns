@@ -13,6 +13,29 @@ import (
 	"github.com/movishell/docker-external-dns/internal/source"
 )
 
+// dockerAdapter wraps a *source.DockerSource so it satisfies controller.Source,
+// translating Docker SDK events into the controller's domain Event type.
+type dockerAdapter struct {
+	*source.DockerSource
+}
+
+func (a dockerAdapter) Events(ctx context.Context) (<-chan controller.Event, <-chan error) {
+	raw, errCh := a.DockerSource.Events(ctx)
+	out := make(chan controller.Event)
+	go func() {
+		defer close(out)
+		for m := range raw {
+			ev := controller.Event{Action: string(m.Action), Name: m.Actor.Attributes["name"]}
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, errCh
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -47,7 +70,7 @@ func main() {
 		cfg.DryRun,
 	)
 
-	ctrl := controller.New(dockerSrc, unifiClient, cfg.OwnerID, cfg.ReconcileInterval)
+	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.ReconcileInterval)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

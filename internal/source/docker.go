@@ -12,9 +12,17 @@ import (
 	"github.com/docker/docker/client"
 )
 
+// dockerClient is the subset of *client.Client that DockerSource uses.
+// Defined here so tests can supply a fake without a live daemon.
+type dockerClient interface {
+	ContainerList(ctx context.Context, options container.ListOptions) ([]dockertypes.Container, error)
+	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
+	Close() error
+}
+
 // DockerSource lists running containers and streams lifecycle events.
 type DockerSource struct {
-	cli      *client.Client
+	cli      dockerClient
 	targetIP string
 	ownerID  string
 }
@@ -28,6 +36,12 @@ func NewDockerSource(dockerHost, targetIP, ownerID string) (*DockerSource, error
 		return nil, err
 	}
 	return &DockerSource{cli: cli, targetIP: targetIP, ownerID: ownerID}, nil
+}
+
+// newDockerSourceWithClient constructs a DockerSource using an injected client.
+// Used by tests to supply a fake without a live Docker daemon.
+func newDockerSourceWithClient(cli dockerClient, targetIP, ownerID string) *DockerSource {
+	return &DockerSource{cli: cli, targetIP: targetIP, ownerID: ownerID}
 }
 
 // Endpoints returns the desired DNS endpoints from all currently running containers.
