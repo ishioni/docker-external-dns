@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/movishell/docker-external-dns/internal/provider/unifi"
-	"github.com/movishell/docker-external-dns/internal/registry"
-	"github.com/movishell/docker-external-dns/internal/source"
+	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
+	"github.com/ishioni/docker-external-dns/internal/registry"
+	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
 // ---- fakes ----
@@ -125,9 +125,13 @@ func aRec(id, key, value string) unifi.DNSRecord {
 }
 
 func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
+	return ownedTXTWithPrefix("", id, hostname, owner)
+}
+
+func ownedTXTWithPrefix(prefix, id, hostname, owner string) unifi.DNSRecord {
 	return unifi.DNSRecord{
 		ID:         id,
-		Key:        registry.TXTKey("A", hostname),
+		Key:        registry.TXTKey(prefix, "A", hostname),
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(owner, "docker/"+hostname),
 	}
@@ -154,7 +158,7 @@ func countOp(calls []providerCall, op string) int {
 }
 
 func newCtrl(src *fakeSource, prov *fakeProvider) *Controller {
-	return New(src, prov, testOwner, time.Hour)
+	return New(src, prov, testOwner, "", time.Hour)
 }
 
 // ---- reconcile tests ----
@@ -306,7 +310,7 @@ func TestRun_DebouncesEventsAndReconciles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ctrl := New(src, prov, testOwner, time.Hour)
+	ctrl := New(src, prov, testOwner, "", time.Hour)
 	go ctrl.Run(ctx)
 
 	// Emit one event to trigger the debounce path.
@@ -322,6 +326,20 @@ func TestRun_DebouncesEventsAndReconciles(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Errorf("expected ≥2 list calls after debounce, got %d", countOp(prov.snapshot(), "list"))
+}
+
+func TestReconcile_RespectsTXTPrefix(t *testing.T) {
+	const prefix = "userprefix."
+	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
+	prov := &fakeProvider{}
+	ctrl := New(src, prov, testOwner, prefix, time.Hour)
+	ctrl.reconcile(context.Background())
+
+	creates := opKeys(prov.calls, "create")
+	wantTXTKey := "userprefix.a-foo.example.com"
+	if !containsAll(creates, []string{"foo.example.com", wantTXTKey}) {
+		t.Errorf("expected TXT key %q with prefix, got creates: %v", wantTXTKey, creates)
+	}
 }
 
 // ---- set helper ----

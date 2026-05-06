@@ -1,4 +1,4 @@
-module github.com/movishell/docker-external-dns
+module github.com/ishioni/docker-external-dns
 
 go 1.26.2
 

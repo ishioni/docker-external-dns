@@ -51,7 +51,7 @@ Docker daemon → label parser → plan → UniFi static-DNS
 - **Auth**: X-Api-Key PAT only (UniFi Network 9.0+). No username/password fallback to keep the surface small. Add it later if needed.
 - **Record type**: A records only. CNAMEs excluded because they don't work with wildcard domains in UniFi.
 - **Opt-in labels**: Both `traefik.enable=true` AND `external-dns.enabled=true` must be set. This avoids accidentally managing services that only intend to use Traefik.
-- **TXT prefix**: `%{record_type}-` → `a-foo.example.com` for `foo.example.com`. Wire-compatible with kubernetes-sigs/external-dns default prefix.
+- **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.ishioni.casa` lives at `talos.a-postgres.ishioni.casa`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
 - **Ownership safety**: Records without matching owner TXT are never deleted.
 - **Debounce**: Docker events are debounced 2s before triggering a reconcile to coalesce rapid restarts.
 

@@ -19,9 +19,10 @@ type Config struct {
 	DockerHost string
 
 	// DNS
-	TargetIP           string
-	OwnerID            string
-	ReconcileInterval  time.Duration
+	TargetIP          string
+	OwnerID           string
+	TxtPrefix         string
+	ReconcileInterval time.Duration
 
 	// App
 	LogLevel  slog.Level
@@ -34,7 +35,8 @@ func Load() (*Config, error) {
 		UnifiSite:              getEnvDefault("UNIFI_SITE", "default"),
 		UnifiInsecureSkipVerify: parseBool(getEnvDefault("UNIFI_INSECURE_SKIP_VERIFY", "true")),
 		DockerHost:             getEnvDefault("DOCKER_HOST", "unix:///var/run/docker.sock"),
-		OwnerID:                getEnvDefault("OWNER_ID", "docker-external-dns"),
+		OwnerID:   getEnvDefault("TXT_OWNER", "docker-external-dns"),
+		TxtPrefix: getEnvDefault("TXT_PREFIX", ""),
 		LogFormat:              getEnvDefault("LOG_FORMAT", "text"),
 		DryRun:                 parseBool(getEnvDefault("DRY_RUN", "false")),
 	}

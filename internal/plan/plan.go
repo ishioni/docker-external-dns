@@ -4,9 +4,9 @@
 package plan
 
 import (
-	"github.com/movishell/docker-external-dns/internal/provider/unifi"
-	"github.com/movishell/docker-external-dns/internal/registry"
-	"github.com/movishell/docker-external-dns/internal/source"
+	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
+	"github.com/ishioni/docker-external-dns/internal/registry"
+	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
 // Changes holds the three buckets of DNS work to perform.
@@ -22,7 +22,8 @@ type Changes struct {
 // Compute diffs desired endpoints against the current UniFi records and
 // returns what needs to change. It only touches records whose companion
 // TXT ownership record matches ownerID — all others are left untouched.
-func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID string) Changes {
+// txtPrefix must match the value used when writing TXT keys (see registry.TXTKey).
+func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txtPrefix string) Changes {
 	// Build lookup maps from current records.
 	aByKey := make(map[string]unifi.DNSRecord) // key (hostname) → A record
 	txtByKey := make(map[string]unifi.DNSRecord) // ownership TXT key → TXT record
@@ -40,9 +41,7 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID stri
 	owned := make(map[string]bool)
 	for _, txtRec := range txtByKey {
 		if registry.IsOwnedBy(txtRec.Value, ownerID) {
-			// The TXT key is like "a-foo.example.com"; strip the "a-" prefix.
-			if len(txtRec.Key) > 2 {
-				hostname := txtRec.Key[2:] // strip "a-"
+			if hostname, ok := registry.HostnameFromTXTKey(txtPrefix, "A", txtRec.Key); ok {
 				owned[hostname] = true
 			}
 		}

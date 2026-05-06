@@ -22,9 +22,19 @@ type OwnershipRecord struct {
 }
 
 // TXTKey returns the TXT record name for the given DNS name and record type.
-// e.g. TXTKey("A", "foo.example.com") == "a-foo.example.com"
-func TXTKey(recordType, dnsName string) string {
-	return fmt.Sprintf("%s-%s", strings.ToLower(recordType), dnsName)
+// An optional prefix is prepended verbatim (include a trailing separator if needed).
+// e.g. TXTKey("", "A", "foo.example.com") == "a-foo.example.com"
+// e.g. TXTKey("talos.", "A", "foo.example.com") == "talos.a-foo.example.com"
+func TXTKey(prefix, recordType, dnsName string) string {
+	return prefix + strings.ToLower(recordType) + "-" + dnsName
+}
+
+// HostnameFromTXTKey reverses TXTKey: given the same prefix and record type, it
+// strips the leading "prefix+recordType-" from txtKey and returns the original
+// hostname. Returns ("", false) if txtKey does not carry the expected prefix.
+func HostnameFromTXTKey(prefix, recordType, txtKey string) (string, bool) {
+	expected := prefix + strings.ToLower(recordType) + "-"
+	return strings.CutPrefix(txtKey, expected)
 }
 
 // EncodeTXT produces the TXT record value for an ownership record.

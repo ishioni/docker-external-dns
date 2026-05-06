@@ -16,7 +16,8 @@ services:
       TARGET_IP: ${TARGET_IP}
       UNIFI_SITE: ${UNIFI_SITE:-default}
       UNIFI_INSECURE_SKIP_VERIFY: ${UNIFI_INSECURE_SKIP_VERIFY:-true}
-      OWNER_ID: ${OWNER_ID:-docker-external-dns}
+      TXT_OWNER: ${TXT_OWNER:-docker-external-dns}
+      TXT_PREFIX: ${TXT_PREFIX:-}
       RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-30s}
       LOG_LEVEL: debug
       DRY_RUN: ${DRY_RUN:-false}

@@ -7,10 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/movishell/docker-external-dns/internal/config"
-	"github.com/movishell/docker-external-dns/internal/controller"
-	"github.com/movishell/docker-external-dns/internal/provider/unifi"
-	"github.com/movishell/docker-external-dns/internal/source"
+	"github.com/ishioni/docker-external-dns/internal/config"
+	"github.com/ishioni/docker-external-dns/internal/controller"
+	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
+	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
 // Build-time metadata populated by -ldflags "-X main.Version=… -X main.Gitsha=…".
@@ -55,6 +55,7 @@ func main() {
 		"version", Version,
 		"gitsha", Gitsha,
 		"owner_id", cfg.OwnerID,
+		"txt_prefix", cfg.TxtPrefix,
 		"unifi_host", cfg.UnifiHost,
 		"unifi_site", cfg.UnifiSite,
 		"target_ip", cfg.TargetIP,
@@ -78,7 +79,7 @@ func main() {
 		cfg.DryRun,
 	)
 
-	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.ReconcileInterval)
+	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.TxtPrefix, cfg.ReconcileInterval)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

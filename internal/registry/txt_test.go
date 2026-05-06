@@ -7,15 +7,43 @@ import (
 
 func TestTXTKey(t *testing.T) {
 	cases := []struct {
-		recordType, dnsName, want string
+		prefix, recordType, dnsName, want string
 	}{
-		{"A", "foo.example.com", "a-foo.example.com"},
-		{"a", "foo.example.com", "a-foo.example.com"},
-		{"CNAME", "x.y.z", "cname-x.y.z"},
+		{"", "A", "foo.example.com", "a-foo.example.com"},
+		{"", "a", "foo.example.com", "a-foo.example.com"},
+		{"", "CNAME", "x.y.z", "cname-x.y.z"},
+		{"userprefix.", "A", "db.example.com", "userprefix.a-db.example.com"},
+		{"userprefix.", "CNAME", "app.example.com", "userprefix.cname-app.example.com"},
 	}
 	for _, c := range cases {
-		if got := TXTKey(c.recordType, c.dnsName); got != c.want {
-			t.Errorf("TXTKey(%q, %q) = %q, want %q", c.recordType, c.dnsName, got, c.want)
+		if got := TXTKey(c.prefix, c.recordType, c.dnsName); got != c.want {
+			t.Errorf("TXTKey(%q, %q, %q) = %q, want %q", c.prefix, c.recordType, c.dnsName, got, c.want)
+		}
+	}
+}
+
+func TestHostnameFromTXTKey(t *testing.T) {
+	cases := []struct {
+		prefix, recordType, txtKey string
+		wantHostname               string
+		wantOK                     bool
+	}{
+		{"", "A", "a-foo.example.com", "foo.example.com", true},
+		{"userprefix.", "A", "userprefix.a-db.example.com", "db.example.com", true},
+		{"userprefix.", "CNAME", "userprefix.cname-app.example.com", "app.example.com", true},
+		// key doesn't carry the expected prefix — only ok matters
+		{"userprefix.", "A", "a-foo.example.com", "", false},
+		{"", "A", "userprefix.a-foo.example.com", "", false},
+	}
+	for _, c := range cases {
+		got, ok := HostnameFromTXTKey(c.prefix, c.recordType, c.txtKey)
+		if ok != c.wantOK {
+			t.Errorf("HostnameFromTXTKey(%q, %q, %q) ok=%v, want %v",
+				c.prefix, c.recordType, c.txtKey, ok, c.wantOK)
+		}
+		if ok && got != c.wantHostname {
+			t.Errorf("HostnameFromTXTKey(%q, %q, %q) = %q, want %q",
+				c.prefix, c.recordType, c.txtKey, got, c.wantHostname)
 		}
 	}
 }

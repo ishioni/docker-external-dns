@@ -3,9 +3,9 @@ package plan
 import (
 	"testing"
 
-	"github.com/movishell/docker-external-dns/internal/provider/unifi"
-	"github.com/movishell/docker-external-dns/internal/registry"
-	"github.com/movishell/docker-external-dns/internal/source"
+	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
+	"github.com/ishioni/docker-external-dns/internal/registry"
+	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
 const ownerID = "us"
@@ -27,9 +27,13 @@ func aRecord(id, key, value string) unifi.DNSRecord {
 }
 
 func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
+	return ownedTXTWithPrefix("", id, hostname, owner)
+}
+
+func ownedTXTWithPrefix(prefix, id, hostname, owner string) unifi.DNSRecord {
 	return unifi.DNSRecord{
 		ID:         id,
-		Key:        registry.TXTKey("A", hostname),
+		Key:        registry.TXTKey(prefix, "A", hostname),
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(owner, "docker/"+hostname),
 	}
@@ -111,7 +115,7 @@ func TestCompute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Compute(tt.desired, tt.current, ownerID)
+			got := Compute(tt.desired, tt.current, ownerID, "")
 
 			gotCreate := dnsNames(got.Create)
 			gotUpdate := dnsNames(got.Update)
@@ -127,6 +131,24 @@ func TestCompute(t *testing.T) {
 				t.Errorf("Delete = %v, want %v", gotDelete, tt.wantDelete)
 			}
 		})
+	}
+}
+
+func TestCompute_WithTXTPrefix(t *testing.T) {
+	const prefix = "userprefix."
+	desired := []*source.Endpoint{endpoint("foo.example.com", "10.0.0.2")}
+	current := []unifi.DNSRecord{
+		aRecord("a1", "foo.example.com", "10.0.0.1"),
+		ownedTXTWithPrefix(prefix, "t1", "foo.example.com", ownerID),
+	}
+
+	got := Compute(desired, current, ownerID, prefix)
+
+	if len(got.Create) != 0 || len(got.Delete) != 0 {
+		t.Errorf("expected no create/delete, got create=%v delete=%v", got.Create, got.Delete)
+	}
+	if len(got.Update) != 1 || got.Update[0].DNSName != "foo.example.com" {
+		t.Errorf("expected update for foo.example.com, got %v", got.Update)
 	}
 }
 

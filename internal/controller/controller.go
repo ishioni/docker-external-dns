@@ -5,26 +5,28 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/movishell/docker-external-dns/internal/plan"
-	"github.com/movishell/docker-external-dns/internal/provider/unifi"
-	"github.com/movishell/docker-external-dns/internal/registry"
-	"github.com/movishell/docker-external-dns/internal/source"
+	"github.com/ishioni/docker-external-dns/internal/plan"
+	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
+	"github.com/ishioni/docker-external-dns/internal/registry"
+	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
 // Controller orchestrates the reconcile loop.
 type Controller struct {
-	source   Source
-	provider Provider
-	ownerID  string
-	interval time.Duration
+	source    Source
+	provider  Provider
+	ownerID   string
+	txtPrefix string
+	interval  time.Duration
 }
 
-func New(src Source, provider Provider, ownerID string, interval time.Duration) *Controller {
+func New(src Source, provider Provider, ownerID, txtPrefix string, interval time.Duration) *Controller {
 	return &Controller{
-		source:   src,
-		provider: provider,
-		ownerID:  ownerID,
-		interval: interval,
+		source:    src,
+		provider:  provider,
+		ownerID:   ownerID,
+		txtPrefix: txtPrefix,
+		interval:  interval,
 	}
 }
 
@@ -102,7 +104,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 		return
 	}
 
-	changes := plan.Compute(desired, current, c.ownerID)
+	changes := plan.Compute(desired, current, c.ownerID, c.txtPrefix)
 	log.Info("reconcile plan computed",
 		"create", len(changes.Create),
 		"update", len(changes.Update),
@@ -154,7 +156,7 @@ func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint) error 
 		return err
 	}
 
-	txtKey := registry.TXTKey(ep.RecordType, ep.DNSName)
+	txtKey := registry.TXTKey(c.txtPrefix, ep.RecordType, ep.DNSName)
 	_, err = c.provider.CreateRecord(ctx, unifi.DNSRecord{
 		Key:        txtKey,
 		RecordType: "TXT",
@@ -176,7 +178,7 @@ func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, curren
 	}
 
 	// Update the companion TXT record.
-	txtKey := registry.TXTKey(ep.RecordType, ep.DNSName)
+	txtKey := registry.TXTKey(c.txtPrefix, ep.RecordType, ep.DNSName)
 	txtRec := findRecord(current, txtKey, "TXT")
 	newTXT := unifi.DNSRecord{
 		Key:        txtKey,
@@ -197,7 +199,7 @@ func (c *Controller) deletePair(ctx context.Context, aRec unifi.DNSRecord, curre
 		return err
 	}
 
-	txtKey := registry.TXTKey(aRec.RecordType, aRec.Key)
+	txtKey := registry.TXTKey(c.txtPrefix, aRec.RecordType, aRec.Key)
 	txtRec := findRecord(current, txtKey, "TXT")
 	if txtRec != nil {
 		return c.provider.DeleteRecord(ctx, txtRec.ID, txtRec.Key, "TXT")
