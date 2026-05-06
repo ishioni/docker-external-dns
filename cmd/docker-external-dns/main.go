@@ -13,6 +13,12 @@ import (
 	"github.com/movishell/docker-external-dns/internal/source"
 )
 
+// Build-time metadata populated by -ldflags "-X main.Version=… -X main.Gitsha=…".
+var (
+	Version = "dev"
+	Gitsha  = "dev"
+)
+
 // dockerAdapter wraps a *source.DockerSource so it satisfies controller.Source,
 // translating Docker SDK events into the controller's domain Event type.
 type dockerAdapter struct {
@@ -46,6 +52,8 @@ func main() {
 	setupLogging(cfg)
 
 	slog.Info("docker-external-dns starting",
+		"version", Version,
+		"gitsha", Gitsha,
 		"owner_id", cfg.OwnerID,
 		"unifi_host", cfg.UnifiHost,
 		"unifi_site", cfg.UnifiSite,

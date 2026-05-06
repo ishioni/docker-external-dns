@@ -7,3 +7,4 @@ Thumbs.db
 
 docker-external-dns
 !cmd/docker-external-dns/
+coverage.out
