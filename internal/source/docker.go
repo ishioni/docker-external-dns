@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"strings"
 
-	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
@@ -15,7 +14,7 @@ import (
 // dockerClient is the subset of *client.Client that DockerSource uses.
 // Defined here so tests can supply a fake without a live daemon.
 type dockerClient interface {
-	ContainerList(ctx context.Context, options container.ListOptions) ([]dockertypes.Container, error)
+	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	Close() error
 }
@@ -81,7 +80,7 @@ func (s *DockerSource) Close() error {
 	return s.cli.Close()
 }
 
-func containerName(c dockertypes.Container) string {
+func containerName(c container.Summary) string {
 	if len(c.Names) > 0 {
 		// Docker prefixes names with "/"
 		return strings.TrimPrefix(c.Names[0], "/")

@@ -132,10 +132,6 @@ func ownedTXT(id, hostname, owner string) unifi.DNSRecord {
 	return ownedTXTType("", id, "A", hostname, owner)
 }
 
-func ownedTXTWithPrefix(prefix, id, hostname, owner string) unifi.DNSRecord {
-	return ownedTXTType(prefix, id, "A", hostname, owner)
-}
-
 func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecord {
 	return unifi.DNSRecord{
 		ID:         id,

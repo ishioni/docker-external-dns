@@ -17,11 +17,11 @@ const defaultTTL = 300
 
 // Client talks to the UniFi OS static-dns REST API.
 type Client struct {
-	http     *http.Client
-	baseURL  string
-	site     string
-	apiKey   string
-	dryRun   bool
+	http    *http.Client
+	baseURL string
+	site    string
+	apiKey  string
+	dryRun  bool
 }
 
 // NewClient creates an authenticated UniFi client.

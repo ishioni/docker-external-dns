@@ -209,14 +209,6 @@ func TestCompute_WithTXTPrefix(t *testing.T) {
 	}
 }
 
-func dnsNames(eps []*source.Endpoint) []string {
-	out := make([]string, len(eps))
-	for i, e := range eps {
-		out[i] = e.DNSName
-	}
-	return out
-}
-
 func endpointKeys(eps []*source.Endpoint) []string {
 	out := make([]string, len(eps))
 	for i, e := range eps {

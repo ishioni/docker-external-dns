@@ -6,7 +6,6 @@ import (
 	"sort"
 	"testing"
 
-	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 )
@@ -14,14 +13,14 @@ import (
 // ---- fake Docker client ----
 
 type fakeDockerClient struct {
-	containers        []dockertypes.Container
+	containers        []container.Summary
 	listErr           error
 	eventCh           chan events.Message
 	errCh             chan error
 	lastEventsOptions events.ListOptions
 }
 
-func (f *fakeDockerClient) ContainerList(_ context.Context, _ container.ListOptions) ([]dockertypes.Container, error) {
+func (f *fakeDockerClient) ContainerList(_ context.Context, _ container.ListOptions) ([]container.Summary, error) {
 	return f.containers, f.listErr
 }
 
@@ -41,7 +40,7 @@ func (f *fakeDockerClient) Close() error { return nil }
 
 // ---- helpers ----
 
-func inScopeContainer(id, name string, extraLabels map[string]string) dockertypes.Container {
+func inScopeContainer(id, name string, extraLabels map[string]string) container.Summary {
 	labels := map[string]string{
 		"traefik.enable":       "true",
 		"external-dns.enabled": "true",
@@ -49,7 +48,7 @@ func inScopeContainer(id, name string, extraLabels map[string]string) dockertype
 	for k, v := range extraLabels {
 		labels[k] = v
 	}
-	return dockertypes.Container{
+	return container.Summary{
 		ID:     id,
 		Names:  []string{"/" + name},
 		Labels: labels,
@@ -95,7 +94,7 @@ func TestEndpoints_PropagatesListError(t *testing.T) {
 
 func TestEndpoints_AggregatesAcrossContainers(t *testing.T) {
 	cli := &fakeDockerClient{
-		containers: []dockertypes.Container{
+		containers: []container.Summary{
 			inScopeContainer("id1", "svc-a", map[string]string{
 				"traefik.http.routers.a.rule": "Host(`a.example.com`)",
 			}),
@@ -123,7 +122,7 @@ func TestEndpoints_AggregatesAcrossContainers(t *testing.T) {
 
 func TestEndpoints_StripsLeadingSlashFromName(t *testing.T) {
 	cli := &fakeDockerClient{
-		containers: []dockertypes.Container{
+		containers: []container.Summary{
 			inScopeContainer("id1", "whoami", map[string]string{
 				"traefik.http.routers.w.rule": "Host(`whoami.example.com`)",
 			}),
@@ -144,7 +143,7 @@ func TestEndpoints_StripsLeadingSlashFromName(t *testing.T) {
 
 func TestEndpoints_FallsBackToIDWhenNamesEmpty(t *testing.T) {
 	cli := &fakeDockerClient{
-		containers: []dockertypes.Container{
+		containers: []container.Summary{
 			{
 				ID:    "abcdef0123456789",
 				Names: nil,
