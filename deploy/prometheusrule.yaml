@@ -1,0 +1,54 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: docker-external-dns
+  labels:
+    app.kubernetes.io/name: docker-external-dns
+spec:
+  groups:
+    - name: docker-external-dns.rules
+      rules:
+        - alert: DockerExternalDNSNoSuccessfulReconcile
+          expr: time() - docker_external_dns_reconcile_last_success_timestamp_seconds > 900
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: docker-external-dns has not reconciled successfully
+            description: docker-external-dns has not completed a successful reconcile for more than 15 minutes.
+
+        - alert: DockerExternalDNSReconcileErrors
+          expr: increase(docker_external_dns_reconcile_total{result="error"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: docker-external-dns reconcile errors
+            description: docker-external-dns reported one or more failed reconciles in the last 10 minutes.
+
+        - alert: DockerExternalDNSChangeErrors
+          expr: increase(docker_external_dns_changes_total{result="error"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: docker-external-dns DNS change errors
+            description: docker-external-dns failed to apply one or more DNS changes in the last 10 minutes.
+
+        - alert: DockerExternalDNSProviderErrors
+          expr: increase(docker_external_dns_provider_errors_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: docker-external-dns provider errors
+            description: docker-external-dns saw UniFi/provider API, network, or data errors in the last 10 minutes.
+
+        - alert: DockerExternalDNSSlowReconcile
+          expr: histogram_quantile(0.95, rate(docker_external_dns_reconcile_duration_seconds_bucket[15m])) > 30
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: docker-external-dns slow reconciles
+            description: The p95 docker-external-dns reconcile duration has been above 30 seconds for 10 minutes.

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ishioni/docker-external-dns/internal/config"
+	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
 	"github.com/ishioni/docker-external-dns/internal/plan"
 	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
 	"github.com/ishioni/docker-external-dns/internal/registry"
@@ -64,6 +65,7 @@ func (c *Controller) Run(ctx context.Context) {
 				continue
 			}
 			slog.Debug("source event received", "action", msg.Action, "container", msg.Name)
+			appmetrics.IncDockerEvent(msg.Action)
 			if !pending {
 				debounce.Reset(2 * time.Second)
 				pending = true
@@ -76,6 +78,7 @@ func (c *Controller) Run(ctx context.Context) {
 			}
 			if err != nil && ctx.Err() == nil {
 				slog.Error("source event stream error", "err", err)
+				appmetrics.IncSourceError("events")
 			}
 
 		case <-debounce.C:
@@ -93,11 +96,19 @@ func (c *Controller) Run(ctx context.Context) {
 // reconcile fetches desired state from the source and current state from the
 // provider, computes the diff, and applies changes.
 func (c *Controller) reconcile(ctx context.Context) {
+	start := time.Now()
+	success := false
+	defer func() {
+		appmetrics.ObserveReconcile(time.Since(start), success)
+	}()
+
 	log := slog.With("phase", "reconcile")
 
 	desired, err := c.source.Endpoints(ctx)
 	if err != nil {
 		log.Error("failed to list source endpoints", "err", err)
+		appmetrics.IncSourceError("list")
+		appmetrics.IncReconcileError("source")
 		return
 	}
 	log.Debug("desired endpoints", "count", len(desired))
@@ -105,12 +116,20 @@ func (c *Controller) reconcile(ctx context.Context) {
 	current, err := c.provider.ListRecords(ctx)
 	if err != nil {
 		log.Error("failed to list provider records", "err", err)
+		appmetrics.IncReconcileError("provider_list")
 		return
 	}
 
 	changes := plan.Compute(desired, current, c.ownerID, c.txtPrefix)
 	planned := changes
 	changes = applyPolicy(changes, c.policy)
+	appmetrics.SetPlanMetrics(len(desired), len(current), map[string]int{
+		"create":            len(changes.Create),
+		"update":            len(changes.Update),
+		"replace":           len(changes.Replace),
+		"delete":            len(changes.Delete),
+		"orphan_txt_delete": len(changes.OrphanTXT),
+	})
 	log.Info("reconcile plan computed",
 		"create", len(changes.Create),
 		"update", len(changes.Update),
@@ -131,8 +150,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 	for _, replacement := range changes.Replace {
 		if err := c.replacePair(ctx, replacement.Old, replacement.Desired, current); err != nil {
 			log.Error("replace failed", "hostname", replacement.Desired.DNSName, "from_type", replacement.Old.RecordType, "to_type", replacement.Desired.RecordType, "err", err)
+			appmetrics.ObserveChange("replace", replacement.Desired.RecordType, false)
+			appmetrics.IncReconcileError("apply")
 			failed++
 		} else {
+			appmetrics.ObserveChange("replace", replacement.Desired.RecordType, true)
 			deleted++
 			created++
 		}
@@ -142,8 +164,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 	for _, ep := range changes.Create {
 		if err := c.createPair(ctx, ep, current); err != nil {
 			log.Error("create failed", "hostname", ep.DNSName, "err", err)
+			appmetrics.ObserveChange("create", ep.RecordType, false)
+			appmetrics.IncReconcileError("apply")
 			failed++
 		} else {
+			appmetrics.ObserveChange("create", ep.RecordType, true)
 			created++
 		}
 	}
@@ -152,8 +177,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 	for _, ep := range changes.Update {
 		if err := c.updatePair(ctx, ep, current); err != nil {
 			log.Error("update failed", "hostname", ep.DNSName, "err", err)
+			appmetrics.ObserveChange("update", ep.RecordType, false)
+			appmetrics.IncReconcileError("apply")
 			failed++
 		} else {
+			appmetrics.ObserveChange("update", ep.RecordType, true)
 			updated++
 		}
 	}
@@ -162,8 +190,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 	for _, rec := range changes.Delete {
 		if err := c.deletePair(ctx, rec, current); err != nil {
 			log.Error("delete failed", "hostname", rec.Key, "err", err)
+			appmetrics.ObserveChange("delete", rec.RecordType, false)
+			appmetrics.IncReconcileError("apply")
 			failed++
 		} else {
+			appmetrics.ObserveChange("delete", rec.RecordType, true)
 			deleted++
 		}
 	}
@@ -172,11 +203,16 @@ func (c *Controller) reconcile(ctx context.Context) {
 	for _, rec := range changes.OrphanTXT {
 		if err := c.provider.DeleteRecord(ctx, rec.ID, rec.Key, "TXT"); err != nil {
 			log.Error("orphan TXT delete failed", "key", rec.Key, "err", err)
+			appmetrics.ObserveChange("orphan_txt_delete", "TXT", false)
+			appmetrics.IncReconcileError("apply")
 			failed++
 		} else {
+			appmetrics.ObserveChange("orphan_txt_delete", "TXT", true)
 			orphanCleaned++
 		}
 	}
+
+	success = failed == 0
 
 	log.Info("reconcile done",
 		"created", created,

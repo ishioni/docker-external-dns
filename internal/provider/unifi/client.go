@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"time"
+
+	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
 )
 
 const defaultTTL = 300
@@ -111,10 +113,18 @@ func (c *Client) DeleteRecord(ctx context.Context, id, key, recordType string) e
 }
 
 func (c *Client) do(ctx context.Context, method, url string, body, out any) error {
+	start := time.Now()
+	statusCode := 0
+	errType := ""
+	defer func() {
+		appmetrics.ObserveProviderRequest(method, statusCode, time.Since(start), errType)
+	}()
+
 	var bodyReader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
+			errType = "data"
 			return &DataError{Operation: "marshal", DataType: "request body", Err: err}
 		}
 		bodyReader = bytes.NewReader(b)
@@ -122,6 +132,7 @@ func (c *Client) do(ctx context.Context, method, url string, body, out any) erro
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
+		errType = "data"
 		return &DataError{Operation: "create request", DataType: "HTTP request", Err: err}
 	}
 	req.Header.Set("X-Api-Key", c.apiKey)
@@ -130,21 +141,26 @@ func (c *Client) do(ctx context.Context, method, url string, body, out any) erro
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		errType = "network"
 		return &NetworkError{Operation: method, URL: url, Err: err}
 	}
 	defer resp.Body.Close()
+	statusCode = resp.StatusCode
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errType = "api"
 		return readAPIError(resp, method, url)
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		errType = "data"
 		return &DataError{Operation: "read", DataType: "response body", Err: err}
 	}
 
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
+			errType = "data"
 			return &DataError{Operation: "unmarshal", DataType: "response body", Err: fmt.Errorf("%w (body: %s)", err, string(respBody))}
 		}
 	}
