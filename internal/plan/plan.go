@@ -17,11 +17,19 @@ type Changes struct {
 	Create []*source.Endpoint
 	// Update holds endpoints whose record exists but has a different target value.
 	Update []*source.Endpoint
+	// Replace holds endpoints whose hostname is already owned by us under a
+	// different record type and must be replaced before the desired record can be created.
+	Replace []Replace
 	// Delete holds A/CNAME records owned by us that are no longer in the desired set.
 	Delete []unifi.DNSRecord
 	// OrphanTXT holds TXT ownership records we own that have no companion A/CNAME
 	// and are no longer desired. They should be deleted to keep UniFi clean.
 	OrphanTXT []unifi.DNSRecord
+}
+
+type Replace struct {
+	Old     unifi.DNSRecord
+	Desired *source.Endpoint
 }
 
 type recordKey struct {
@@ -78,9 +86,25 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txt
 	var changes Changes
 
 	// Determine creates and updates.
+	replacedOld := make(map[recordKey]bool)
 	for key, ep := range desiredByKey {
 		existing, exists := aOrCnameByKey[key]
 		if !exists {
+			if old, ok := ownedOtherType(key, desiredByKey, aOrCnameByKey, owned); ok {
+				changes.Replace = append(changes.Replace, Replace{Old: old, Desired: ep})
+				replacedOld[recordKey{Hostname: old.Key, RecordType: old.RecordType}] = true
+				continue
+			}
+			if other, ok := otherTypeRecord(key, aOrCnameByKey); ok {
+				slog.Warn("unowned record at desired hostname with different type; skipping until manually resolved",
+					"hostname", key.Hostname,
+					"current_record_type", other.RecordType,
+					"desired_record_type", key.RecordType,
+					"current_value", other.Value,
+					"desired_value", ep.Target,
+				)
+				continue
+			}
 			changes.Create = append(changes.Create, ep)
 		} else if !owned[key] {
 			// Record exists in UniFi but we did not create it — warn every reconcile.
@@ -97,6 +121,9 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txt
 
 	// Determine deletes: owned records whose key is no longer desired.
 	for key := range owned {
+		if replacedOld[key] {
+			continue
+		}
 		if _, wanted := desiredByKey[key]; !wanted {
 			if rec, ok := aOrCnameByKey[key]; ok {
 				changes.Delete = append(changes.Delete, rec)
@@ -117,4 +144,39 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txt
 	}
 
 	return changes
+}
+
+func ownedOtherType(
+	key recordKey,
+	desiredByKey map[recordKey]*source.Endpoint,
+	aOrCnameByKey map[recordKey]unifi.DNSRecord,
+	owned map[recordKey]bool,
+) (unifi.DNSRecord, bool) {
+	for _, recordType := range []string{"A", "CNAME"} {
+		if recordType == key.RecordType {
+			continue
+		}
+		oldKey := recordKey{Hostname: key.Hostname, RecordType: recordType}
+		if _, wanted := desiredByKey[oldKey]; wanted {
+			continue
+		}
+		rec, exists := aOrCnameByKey[oldKey]
+		if exists && owned[oldKey] {
+			return rec, true
+		}
+	}
+	return unifi.DNSRecord{}, false
+}
+
+func otherTypeRecord(key recordKey, aOrCnameByKey map[recordKey]unifi.DNSRecord) (unifi.DNSRecord, bool) {
+	for _, recordType := range []string{"A", "CNAME"} {
+		if recordType == key.RecordType {
+			continue
+		}
+		rec, exists := aOrCnameByKey[recordKey{Hostname: key.Hostname, RecordType: recordType}]
+		if exists {
+			return rec, true
+		}
+	}
+	return unifi.DNSRecord{}, false
 }

@@ -61,6 +61,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid RECONCILE_INTERVAL %q: %w", interval, err)
 	}
+	if d <= 0 {
+		return nil, fmt.Errorf("RECONCILE_INTERVAL must be positive, got %q", interval)
+	}
 	cfg.ReconcileInterval = d
 
 	level := getEnvDefault("LOG_LEVEL", "info")

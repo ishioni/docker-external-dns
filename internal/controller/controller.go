@@ -108,10 +108,22 @@ func (c *Controller) reconcile(ctx context.Context) {
 	log.Info("reconcile plan computed",
 		"create", len(changes.Create),
 		"update", len(changes.Update),
+		"replace", len(changes.Replace),
 		"delete", len(changes.Delete),
 	)
 
 	created, updated, deleted, orphanCleaned, failed := 0, 0, 0, 0, 0
+
+	// Replace owned records whose type changed, e.g. A -> CNAME.
+	for _, replacement := range changes.Replace {
+		if err := c.replacePair(ctx, replacement.Old, replacement.Desired, current); err != nil {
+			log.Error("replace failed", "hostname", replacement.Desired.DNSName, "from_type", replacement.Old.RecordType, "to_type", replacement.Desired.RecordType, "err", err)
+			failed++
+		} else {
+			deleted++
+			created++
+		}
+	}
 
 	// Create new A/CNAME + TXT pairs.
 	for _, ep := range changes.Create {
@@ -123,7 +135,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 		}
 	}
 
-	// Update changed A records (and refresh TXT).
+	// Update changed A/CNAME records (and refresh TXT).
 	for _, ep := range changes.Update {
 		if err := c.updatePair(ctx, ep, current); err != nil {
 			log.Error("update failed", "hostname", ep.DNSName, "err", err)
@@ -163,15 +175,19 @@ func (c *Controller) reconcile(ctx context.Context) {
 }
 
 func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
+	if err := c.upsertTXT(ctx, ep, current); err != nil {
+		return err
+	}
+
 	_, err := c.provider.CreateRecord(ctx, unifi.DNSRecord{
 		Key:        ep.DNSName,
 		RecordType: ep.RecordType,
 		Value:      ep.Target,
 	})
-	if err != nil {
-		return err
-	}
+	return err
+}
 
+func (c *Controller) upsertTXT(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
 	txtKey := registry.TXTKey(c.txtPrefix, ep.RecordType, ep.DNSName)
 	newTXT := unifi.DNSRecord{
 		Key:        txtKey,
@@ -181,40 +197,36 @@ func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint, curren
 	// Upsert: if an orphan TXT already exists at this key, update it instead of creating.
 	if existing := findRecord(current, txtKey, "TXT"); existing != nil {
 		newTXT.ID = existing.ID
-		_, err = c.provider.UpdateRecord(ctx, newTXT)
-	} else {
-		_, err = c.provider.CreateRecord(ctx, newTXT)
-	}
-	return err
-}
-
-func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
-	// Find the existing A record by key to get its ID.
-	aRec := findRecord(current, ep.DNSName, ep.RecordType)
-	if aRec == nil {
-		// Shouldn't happen (plan only adds updates for existing records), but handle gracefully.
-		return c.createPair(ctx, ep, current)
-	}
-	aRec.Value = ep.Target
-	if _, err := c.provider.UpdateRecord(ctx, *aRec); err != nil {
-		return err
-	}
-
-	// Update the companion TXT record.
-	txtKey := registry.TXTKey(c.txtPrefix, ep.RecordType, ep.DNSName)
-	txtRec := findRecord(current, txtKey, "TXT")
-	newTXT := unifi.DNSRecord{
-		Key:        txtKey,
-		RecordType: "TXT",
-		Value:      registry.EncodeTXT(ep.OwnerID, ep.Resource),
-	}
-	if txtRec != nil {
-		newTXT.ID = txtRec.ID
 		_, err := c.provider.UpdateRecord(ctx, newTXT)
 		return err
 	}
 	_, err := c.provider.CreateRecord(ctx, newTXT)
 	return err
+}
+
+func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
+	// Find the existing A/CNAME record by key to get its ID.
+	aRec := findRecord(current, ep.DNSName, ep.RecordType)
+	if aRec == nil {
+		// Shouldn't happen (plan only adds updates for existing records), but handle gracefully.
+		return c.createPair(ctx, ep, current)
+	}
+	if err := c.upsertTXT(ctx, ep, current); err != nil {
+		return err
+	}
+
+	aRec.Value = ep.Target
+	if _, err := c.provider.UpdateRecord(ctx, *aRec); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Controller) replacePair(ctx context.Context, old unifi.DNSRecord, desired *source.Endpoint, current []unifi.DNSRecord) error {
+	if err := c.deletePair(ctx, old, current); err != nil {
+		return err
+	}
+	return c.createPair(ctx, desired, current)
 }
 
 func (c *Controller) deletePair(ctx context.Context, aRec unifi.DNSRecord, current []unifi.DNSRecord) error {

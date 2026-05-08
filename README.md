@@ -58,7 +58,7 @@ docker compose up -d
 | `RECONCILE_INTERVAL` | `5m` | How often to run a full reconcile |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_FORMAT` | `text` | `text` or `json` |
-| `DRY_RUN` | `false` | Log planned changes without calling UniFi |
+| `DRY_RUN` | `false` | List current UniFi records and log planned changes without mutating UniFi |
 
 ## Container labels
 

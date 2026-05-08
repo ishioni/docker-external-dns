@@ -176,6 +176,7 @@ func TestReconcile_CreatesNewPair(t *testing.T) {
 	if !containsAll(creates, []string{"foo.example.com", "a-foo.example.com"}) {
 		t.Errorf("expected creates for A and TXT, got %v", creates)
 	}
+	assertBefore(t, prov.calls, "create", "a-foo.example.com", "create", "foo.example.com")
 	if countOp(prov.calls, "update") != 0 || countOp(prov.calls, "delete") != 0 {
 		t.Errorf("unexpected update/delete calls: %v", prov.calls)
 	}
@@ -190,6 +191,7 @@ func TestReconcile_CreatesCNAMEPair(t *testing.T) {
 	if !containsAll(creates, []string{"foo.example.com", "cname-foo.example.com"}) {
 		t.Errorf("expected creates for CNAME and TXT, got %v", creates)
 	}
+	assertBefore(t, prov.calls, "create", "cname-foo.example.com", "create", "foo.example.com")
 	for _, c := range prov.calls {
 		if c.Op == "create" && c.Record.Key == "foo.example.com" {
 			if c.Record.RecordType != "CNAME" {
@@ -231,6 +233,7 @@ func TestReconcile_UpdatesOwnedPair(t *testing.T) {
 	if !containsAll(updates, []string{"foo.example.com", "a-foo.example.com"}) {
 		t.Errorf("expected updates for A and TXT, got %v", updates)
 	}
+	assertBefore(t, prov.calls, "update", "a-foo.example.com", "update", "foo.example.com")
 	// Verify the A record gets the new IP.
 	for _, c := range prov.calls {
 		if c.Op == "update" && c.Record.Key == "foo.example.com" && c.Record.Value != "10.0.0.2" {
@@ -312,6 +315,43 @@ func TestReconcile_RecreateMissingA_UpsertsTXT(t *testing.T) {
 	}
 	if !containsAll(updates, []string{"a-foo.example.com"}) {
 		t.Errorf("expected update for orphan TXT, got updates: %v", updates)
+	}
+	assertBefore(t, prov.calls, "update", "a-foo.example.com", "create", "foo.example.com")
+}
+
+func TestReconcile_DoesNotCreateRecordWhenTXTCreateFails(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
+	prov := &fakeProvider{
+		failOn: map[string]error{"create:a-foo.example.com": fmt.Errorf("injected error")},
+	}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	if containsAll(opKeys(prov.calls, "create"), []string{"foo.example.com"}) {
+		t.Errorf("A record must not be created after TXT create fails, got calls: %v", prov.calls)
+	}
+}
+
+func TestReconcile_ReplacesOwnedRecordTypeBeforeCreate(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{epType("foo.example.com", "target.example.com", "CNAME")}}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			aRec("a1", "foo.example.com", "10.0.0.1"),
+			ownedTXT("t1", "foo.example.com", testOwner),
+		},
+	}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	assertBefore(t, prov.calls, "delete", "foo.example.com", "create", "cname-foo.example.com")
+	assertBefore(t, prov.calls, "delete", "a-foo.example.com", "create", "cname-foo.example.com")
+	assertBefore(t, prov.calls, "create", "cname-foo.example.com", "create", "foo.example.com")
+
+	deletes := opKeys(prov.calls, "delete")
+	if !containsAll(deletes, []string{"foo.example.com", "a-foo.example.com"}) {
+		t.Errorf("expected old A pair to be deleted, got deletes: %v", deletes)
+	}
+	creates := opKeys(prov.calls, "create")
+	if !containsAll(creates, []string{"foo.example.com", "cname-foo.example.com"}) {
+		t.Errorf("expected new CNAME pair to be created, got creates: %v", creates)
 	}
 }
 
@@ -431,4 +471,29 @@ func containsAll(haystack, needles []string) bool {
 		}
 	}
 	return true
+}
+
+func assertBefore(t *testing.T, calls []providerCall, firstOp, firstKey, secondOp, secondKey string) {
+	t.Helper()
+
+	first := callIndex(calls, firstOp, firstKey)
+	second := callIndex(calls, secondOp, secondKey)
+	if first < 0 {
+		t.Fatalf("missing %s call for %s in %v", firstOp, firstKey, calls)
+	}
+	if second < 0 {
+		t.Fatalf("missing %s call for %s in %v", secondOp, secondKey, calls)
+	}
+	if first >= second {
+		t.Fatalf("expected %s %s before %s %s, got calls: %v", firstOp, firstKey, secondOp, secondKey, calls)
+	}
+}
+
+func callIndex(calls []providerCall, op, key string) int {
+	for i, c := range calls {
+		if c.Op == op && c.Record.Key == key {
+			return i
+		}
+	}
+	return -1
 }

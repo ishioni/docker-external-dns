@@ -53,13 +53,14 @@ func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecor
 
 func TestCompute(t *testing.T) {
 	tests := []struct {
-		name       string
-		desired    []*source.Endpoint
-		current    []unifi.DNSRecord
-		wantCreate []string
-		wantUpdate []string
-		wantDelete []string
-		wantOrphan []string
+		name        string
+		desired     []*source.Endpoint
+		current     []unifi.DNSRecord
+		wantCreate  []string
+		wantUpdate  []string
+		wantReplace []string
+		wantDelete  []string
+		wantOrphan  []string
 	}{
 		{
 			name: "empty desired and current",
@@ -160,14 +161,20 @@ func TestCompute(t *testing.T) {
 			},
 		},
 		{
-			name:    "record type flip deletes old A and creates new CNAME",
+			name:    "record type flip replaces old A with new CNAME",
 			desired: []*source.Endpoint{endpointType("foo.example.com", "bar.example.com", "CNAME")},
 			current: []unifi.DNSRecord{
 				aRecord("a1", "foo.example.com", "10.0.0.1"),
 				ownedTXT("t1", "foo.example.com", ownerID),
 			},
-			wantCreate: []string{"CNAME:foo.example.com"},
-			wantDelete: []string{"A:foo.example.com"},
+			wantReplace: []string{"A:foo.example.com->CNAME:foo.example.com"},
+		},
+		{
+			name:    "record type flip does not claim unowned old record",
+			desired: []*source.Endpoint{endpointType("foo.example.com", "bar.example.com", "CNAME")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+			},
 		},
 		{
 			name: "collision: two desired endpoints for the same hostname, only one create",
@@ -208,6 +215,7 @@ func TestCompute(t *testing.T) {
 
 			gotCreate := endpointKeys(got.Create)
 			gotUpdate := endpointKeys(got.Update)
+			gotReplace := replaceKeys(got.Replace)
 			gotDelete := recordKeys(got.Delete)
 			gotOrphan := recordKeys(got.OrphanTXT)
 
@@ -216,6 +224,9 @@ func TestCompute(t *testing.T) {
 			}
 			if !sameSet(gotUpdate, tt.wantUpdate) {
 				t.Errorf("Update = %v, want %v", gotUpdate, tt.wantUpdate)
+			}
+			if !sameSet(gotReplace, tt.wantReplace) {
+				t.Errorf("Replace = %v, want %v", gotReplace, tt.wantReplace)
 			}
 			if !sameSet(gotDelete, tt.wantDelete) {
 				t.Errorf("Delete = %v, want %v", gotDelete, tt.wantDelete)
@@ -257,6 +268,14 @@ func recordKeys(rs []unifi.DNSRecord) []string {
 	out := make([]string, len(rs))
 	for i, r := range rs {
 		out[i] = r.RecordType + ":" + r.Key
+	}
+	return out
+}
+
+func replaceKeys(replacements []Replace) []string {
+	out := make([]string, len(replacements))
+	for i, r := range replacements {
+		out[i] = r.Old.RecordType + ":" + r.Old.Key + "->" + r.Desired.RecordType + ":" + r.Desired.DNSName
 	}
 	return out
 }
