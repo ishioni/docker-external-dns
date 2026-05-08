@@ -53,13 +53,13 @@ func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecor
 
 func TestCompute(t *testing.T) {
 	tests := []struct {
-		name        string
-		desired     []*source.Endpoint
-		current     []unifi.DNSRecord
-		wantCreate  []string
-		wantUpdate  []string
-		wantDelete  []string
-		wantOrphan  []string
+		name       string
+		desired    []*source.Endpoint
+		current    []unifi.DNSRecord
+		wantCreate []string
+		wantUpdate []string
+		wantDelete []string
+		wantOrphan []string
 	}{
 		{
 			name: "empty desired and current",
@@ -178,7 +178,7 @@ func TestCompute(t *testing.T) {
 			wantCreate: []string{"A:foo.example.com"},
 		},
 		{
-			name: "unowned existing record: warn but no create, update, or delete",
+			name:    "unowned existing record: warn but no create, update, or delete",
 			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
 			current: []unifi.DNSRecord{
 				aRecord("a1", "foo.example.com", "10.0.0.1"),
@@ -186,7 +186,7 @@ func TestCompute(t *testing.T) {
 			},
 		},
 		{
-			name: "orphan TXT with desired hostname: create A, no orphan",
+			name:    "orphan TXT with desired hostname: create A, no orphan",
 			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
 			current: []unifi.DNSRecord{
 				ownedTXT("t1", "foo.example.com", ownerID), // TXT present, A missing

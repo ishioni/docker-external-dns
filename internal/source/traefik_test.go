@@ -263,9 +263,9 @@ func TestDetectRecordType(t *testing.T) {
 		{"10.1.2.241", "A"},
 		{"traefik.example.com", "CNAME"},
 		{"my-host.internal", "CNAME"},
-		{"::1", "CNAME"},           // IPv6 falls through to CNAME (AAAA not supported yet)
-		{"2001:db8::1", "CNAME"},   // IPv6 falls through to CNAME
-		{"", "CNAME"},              // empty string → CNAME
+		{"::1", "CNAME"},         // IPv6 falls through to CNAME (AAAA not supported yet)
+		{"2001:db8::1", "CNAME"}, // IPv6 falls through to CNAME
+		{"", "CNAME"},            // empty string → CNAME
 		{"not-an-ip.foo", "CNAME"},
 	}
 	for _, tt := range tests {
