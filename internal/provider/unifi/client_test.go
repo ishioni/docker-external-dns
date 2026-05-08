@@ -3,6 +3,8 @@ package unifi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,74 +17,290 @@ const (
 	testSite   = "default"
 )
 
-// recordedRequest captures what the client sent so tests can assert on it.
 type recordedRequest struct {
-	Method string
-	Path   string
-	APIKey string
-	Body   map[string]any
+	Method      string
+	Path        string
+	APIKey      string
+	Accept      string
+	ContentType string
+	Body        map[string]any
 }
 
-func newTestServer(t *testing.T, handler http.HandlerFunc) (*Client, *[]recordedRequest) {
+type strictUniFiServer struct {
+	t        *testing.T
+	server   *httptest.Server
+	records  map[string]DNSRecord
+	requests []recordedRequest
+	nextID   int
+
+	failMethod int
+	failStatus int
+	failBody   errorResponse
+
+	rawStatus int
+	rawBody   string
+}
+
+func newStrictUniFiServer(t *testing.T, initial ...DNSRecord) *strictUniFiServer {
 	t.Helper()
-	var recorded []recordedRequest
+	api := &strictUniFiServer{
+		t:       t,
+		records: make(map[string]DNSRecord),
+	}
+	for _, r := range initial {
+		api.records[r.ID] = r
+	}
+	api.server = httptest.NewServer(http.HandlerFunc(api.handle))
+	t.Cleanup(api.server.Close)
+	return api
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		req := recordedRequest{
-			Method: r.Method,
-			Path:   r.URL.Path,
-			APIKey: r.Header.Get("X-Api-Key"),
-		}
-		if r.Body != nil {
-			b, _ := io.ReadAll(r.Body)
-			if len(b) > 0 {
-				_ = json.Unmarshal(b, &req.Body)
-			}
-		}
-		recorded = append(recorded, req)
-		handler(w, r)
-	}))
-	t.Cleanup(srv.Close)
+func (s *strictUniFiServer) client(dryRun bool) *Client {
+	return NewClient(s.server.URL, testAPIKey, testSite, false, dryRun)
+}
 
-	client := NewClient(srv.URL, testAPIKey, testSite, false, false)
-	return client, &recorded
+func (s *strictUniFiServer) failNext(method string, status int, message string) {
+	s.failMethod = methodCode(method)
+	s.failStatus = status
+	s.failBody = errorResponse{Code: "ERROR", ErrorCode: status, Message: message}
+}
+
+func (s *strictUniFiServer) respondRaw(status int, body string) {
+	s.rawStatus = status
+	s.rawBody = body
+}
+
+func (s *strictUniFiServer) handle(w http.ResponseWriter, r *http.Request) {
+	if s.rawStatus != 0 {
+		w.WriteHeader(s.rawStatus)
+		_, _ = w.Write([]byte(s.rawBody))
+		return
+	}
+
+	req := s.recordRequest(r)
+	s.requests = append(s.requests, req)
+
+	if req.APIKey != testAPIKey {
+		s.writeError(w, http.StatusUnauthorized, "missing or invalid API key")
+		return
+	}
+	if req.Accept != "application/json" {
+		s.writeError(w, http.StatusBadRequest, "missing JSON accept header")
+		return
+	}
+	if req.ContentType != "application/json; charset=utf-8" {
+		s.writeError(w, http.StatusBadRequest, "missing JSON content type")
+		return
+	}
+
+	if s.failMethod == methodCode(r.Method) {
+		s.failMethod = 0
+		w.WriteHeader(s.failStatus)
+		_ = json.NewEncoder(w).Encode(s.failBody)
+		return
+	}
+
+	base := "/proxy/network/v2/api/site/" + testSite + "/static-dns"
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == base:
+		s.list(w)
+	case r.Method == http.MethodPost && r.URL.Path == base:
+		s.create(w, req.Body)
+	case strings.HasPrefix(r.URL.Path, base+"/"):
+		id := strings.TrimPrefix(r.URL.Path, base+"/")
+		switch r.Method {
+		case http.MethodPut:
+			s.update(w, id, req.Body)
+		case http.MethodDelete:
+			s.delete(w, id)
+		default:
+			s.writeError(w, http.StatusMethodNotAllowed, "unsupported method")
+		}
+	default:
+		s.writeError(w, http.StatusNotFound, "unexpected path")
+	}
+}
+
+func (s *strictUniFiServer) recordRequest(r *http.Request) recordedRequest {
+	req := recordedRequest{
+		Method:      r.Method,
+		Path:        r.URL.Path,
+		APIKey:      r.Header.Get("X-Api-Key"),
+		Accept:      r.Header.Get("Accept"),
+		ContentType: r.Header.Get("Content-Type"),
+	}
+	if r.Body != nil {
+		b, _ := io.ReadAll(r.Body)
+		if len(b) > 0 {
+			_ = json.Unmarshal(b, &req.Body)
+		}
+	}
+	return req
+}
+
+func (s *strictUniFiServer) list(w http.ResponseWriter) {
+	records := make([]DNSRecord, 0, len(s.records))
+	for _, r := range s.records {
+		records = append(records, r)
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(records)
+}
+
+func (s *strictUniFiServer) create(w http.ResponseWriter, body map[string]any) {
+	if !s.validRecordBody(w, body) {
+		return
+	}
+	s.nextID++
+	record := recordFromBody(fmt.Sprintf("id-%d", s.nextID), body)
+	s.records[record.ID] = record
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(record)
+}
+
+func (s *strictUniFiServer) update(w http.ResponseWriter, id string, body map[string]any) {
+	if _, ok := s.records[id]; !ok {
+		s.writeError(w, http.StatusNotFound, "record not found")
+		return
+	}
+	if !s.validRecordBody(w, body) {
+		return
+	}
+	record := recordFromBody(id, body)
+	s.records[id] = record
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(record)
+}
+
+func (s *strictUniFiServer) delete(w http.ResponseWriter, id string) {
+	if _, ok := s.records[id]; !ok {
+		s.writeError(w, http.StatusNotFound, "record not found")
+		return
+	}
+	delete(s.records, id)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *strictUniFiServer) validRecordBody(w http.ResponseWriter, body map[string]any) bool {
+	if body["key"] == "" || body["record_type"] == "" || body["value"] == "" {
+		s.writeError(w, http.StatusBadRequest, "missing required record fields")
+		return false
+	}
+	if enabled, ok := body["enabled"].(bool); !ok || !enabled {
+		s.writeError(w, http.StatusBadRequest, "record must be enabled")
+		return false
+	}
+
+	recordType, _ := body["record_type"].(string)
+	_, hasTTL := body["ttl"]
+	switch recordType {
+	case "A", "CNAME":
+		if !hasTTL {
+			s.writeError(w, http.StatusBadRequest, "A and CNAME records require ttl")
+			return false
+		}
+	case "TXT":
+		if hasTTL {
+			s.writeError(w, http.StatusBadRequest, "TXT records must not include ttl")
+			return false
+		}
+	default:
+		s.writeError(w, http.StatusBadRequest, "unsupported record type")
+		return false
+	}
+	return true
+}
+
+func (s *strictUniFiServer) writeError(w http.ResponseWriter, status int, message string) {
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{
+		Code:      "ERROR",
+		ErrorCode: status,
+		Message:   message,
+	})
+}
+
+func recordFromBody(id string, body map[string]any) DNSRecord {
+	ttl := 0
+	if rawTTL, ok := body["ttl"].(float64); ok {
+		ttl = int(rawTTL)
+	}
+	return DNSRecord{
+		ID:         id,
+		Key:        body["key"].(string),
+		RecordType: body["record_type"].(string),
+		Value:      body["value"].(string),
+		TTL:        ttl,
+		Enabled:    body["enabled"].(bool),
+	}
+}
+
+func methodCode(method string) int {
+	switch method {
+	case http.MethodGet:
+		return 1
+	case http.MethodPost:
+		return 2
+	case http.MethodPut:
+		return 3
+	case http.MethodDelete:
+		return 4
+	default:
+		return 0
+	}
 }
 
 func TestListRecords(t *testing.T) {
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"_id":"abc","key":"foo.example.com","record_type":"A","value":"10.0.0.1","enabled":true}]`))
-	})
+	api := newStrictUniFiServer(t,
+		DNSRecord{ID: "a1", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true},
+		DNSRecord{ID: "c1", Key: "alias.example.com", RecordType: "CNAME", Value: "target.example.com", TTL: 300, Enabled: true},
+		DNSRecord{ID: "t1", Key: "a-foo.example.com", RecordType: "TXT", Value: `"heritage=external-dns"`, Enabled: true},
+	)
 
-	got, err := client.ListRecords(context.Background())
+	got, err := api.client(false).ListRecords(context.Background())
 	if err != nil {
 		t.Fatalf("ListRecords: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != "abc" || got[0].Key != "foo.example.com" {
-		t.Errorf("unexpected list result: %+v", got)
+	if len(got) != 3 {
+		t.Fatalf("ListRecords returned %d records, want 3", len(got))
 	}
 
-	if len(*recorded) != 1 {
-		t.Fatalf("expected 1 request, got %d", len(*recorded))
-	}
-	req := (*recorded)[0]
-	if req.Method != http.MethodGet {
-		t.Errorf("Method = %s, want GET", req.Method)
-	}
+	req := api.requests[0]
 	wantPath := "/proxy/network/v2/api/site/" + testSite + "/static-dns"
-	if req.Path != wantPath {
-		t.Errorf("Path = %s, want %s", req.Path, wantPath)
-	}
-	if req.APIKey != testAPIKey {
-		t.Errorf("X-Api-Key = %q, want %q", req.APIKey, testAPIKey)
+	if req.Method != http.MethodGet || req.Path != wantPath {
+		t.Fatalf("request = %s %s, want GET %s", req.Method, req.Path, wantPath)
 	}
 }
 
-func TestCreateA_IncludesTTL(t *testing.T) {
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"_id":"new-id","key":"foo.example.com","record_type":"A","value":"10.0.0.1","ttl":300,"enabled":true}`))
-	})
+func TestListRecords_InvalidJSONReturnsDataError(t *testing.T) {
+	api := newStrictUniFiServer(t)
+	api.respondRaw(http.StatusOK, `{"invalid": json}`)
 
-	got, err := client.CreateRecord(context.Background(), DNSRecord{
+	_, err := api.client(false).ListRecords(context.Background())
+	var dataErr *DataError
+	if !errors.As(err, &dataErr) {
+		t.Fatalf("ListRecords error = %T %v, want *DataError", err, err)
+	}
+}
+
+func TestListRecords_APIErrorIncludesUniFiMessage(t *testing.T) {
+	api := newStrictUniFiServer(t)
+	api.failNext(http.MethodGet, http.StatusInternalServerError, "Internal server error")
+
+	_, err := api.client(false).ListRecords(context.Background())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("ListRecords error = %T %v, want *APIError", err, err)
+	}
+	if apiErr.StatusCode != http.StatusInternalServerError || apiErr.Message != "Internal server error" {
+		t.Fatalf("APIError = %+v, want status/message from UniFi body", apiErr)
+	}
+}
+
+func TestCreateA_IncludesTTLAndHeaders(t *testing.T) {
+	api := newStrictUniFiServer(t)
+
+	got, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
 		Key:        "foo.example.com",
 		RecordType: "A",
 		Value:      "10.0.0.1",
@@ -90,26 +308,47 @@ func TestCreateA_IncludesTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRecord: %v", err)
 	}
-	if got.ID != "new-id" {
-		t.Errorf("ID = %q, want new-id", got.ID)
+	if got.ID == "" {
+		t.Fatal("created record ID is empty")
 	}
 
-	req := (*recorded)[0]
+	req := api.requests[0]
 	if req.Method != http.MethodPost {
-		t.Errorf("Method = %s, want POST", req.Method)
+		t.Fatalf("Method = %s, want POST", req.Method)
 	}
-	if ttl, ok := req.Body["ttl"]; !ok || ttl == nil {
-		t.Errorf("A-record body missing ttl: %v", req.Body)
+	if req.APIKey != testAPIKey || req.Accept != "application/json" || req.ContentType != "application/json; charset=utf-8" {
+		t.Fatalf("unexpected headers: %+v", req)
+	}
+	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != defaultTTL {
+		t.Fatalf("A record ttl = %v, want %d", req.Body["ttl"], defaultTTL)
+	}
+	if req.Body["_id"] != nil {
+		t.Fatalf("create body must not include _id, got %v", req.Body)
+	}
+}
+
+func TestCreateCNAME_IncludesTTL(t *testing.T) {
+	api := newStrictUniFiServer(t)
+
+	_, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
+		Key:        "alias.example.com",
+		RecordType: "CNAME",
+		Value:      "target.example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateRecord (CNAME): %v", err)
+	}
+
+	req := api.requests[0]
+	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != defaultTTL {
+		t.Fatalf("CNAME record ttl = %v, want %d", req.Body["ttl"], defaultTTL)
 	}
 }
 
 func TestCreateTXT_OmitsTTL(t *testing.T) {
-	// Regression guard: UniFi rejects TXT records that carry a ttl field.
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"_id":"txt-id","key":"a-foo.example.com","record_type":"TXT","value":"\"heritage=external-dns,external-dns/owner=us\"","enabled":true}`))
-	})
+	api := newStrictUniFiServer(t)
 
-	_, err := client.CreateRecord(context.Background(), DNSRecord{
+	_, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
 		Key:        "a-foo.example.com",
 		RecordType: "TXT",
 		Value:      `"heritage=external-dns,external-dns/owner=us"`,
@@ -118,38 +357,21 @@ func TestCreateTXT_OmitsTTL(t *testing.T) {
 		t.Fatalf("CreateRecord (TXT): %v", err)
 	}
 
-	req := (*recorded)[0]
+	req := api.requests[0]
 	if _, present := req.Body["ttl"]; present {
-		t.Errorf("TXT record body MUST NOT include ttl, got %v", req.Body)
+		t.Fatalf("TXT record body MUST NOT include ttl, got %v", req.Body)
 	}
-}
-
-func TestCreateCNAME_IncludesTTL(t *testing.T) {
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"_id":"cname-id","key":"foo.example.com","record_type":"CNAME","value":"traefik.example.com","ttl":300,"enabled":true}`))
-	})
-
-	_, err := client.CreateRecord(context.Background(), DNSRecord{
-		Key:        "foo.example.com",
-		RecordType: "CNAME",
-		Value:      "traefik.example.com",
-	})
-	if err != nil {
-		t.Fatalf("CreateRecord (CNAME): %v", err)
-	}
-
-	req := (*recorded)[0]
-	if ttl, ok := req.Body["ttl"]; !ok || ttl == nil {
-		t.Errorf("CNAME-record body missing ttl: %v", req.Body)
+	if req.Body["value"] != `"heritage=external-dns,external-dns/owner=us"` {
+		t.Fatalf("TXT value = %q, want quoted ownership value", req.Body["value"])
 	}
 }
 
 func TestUpdateRecord(t *testing.T) {
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"_id":"abc","key":"foo.example.com","record_type":"A","value":"10.0.0.2","enabled":true}`))
+	api := newStrictUniFiServer(t, DNSRecord{
+		ID: "abc", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true,
 	})
 
-	_, err := client.UpdateRecord(context.Background(), DNSRecord{
+	_, err := api.client(false).UpdateRecord(context.Background(), DNSRecord{
 		ID:         "abc",
 		Key:        "foo.example.com",
 		RecordType: "A",
@@ -159,72 +381,64 @@ func TestUpdateRecord(t *testing.T) {
 		t.Fatalf("UpdateRecord: %v", err)
 	}
 
-	req := (*recorded)[0]
-	if req.Method != http.MethodPut {
-		t.Errorf("Method = %s, want PUT", req.Method)
+	req := api.requests[0]
+	if req.Method != http.MethodPut || !strings.HasSuffix(req.Path, "/static-dns/abc") {
+		t.Fatalf("request = %s %s, want PUT .../static-dns/abc", req.Method, req.Path)
 	}
-	if !strings.HasSuffix(req.Path, "/static-dns/abc") {
-		t.Errorf("Path = %s, expected to end with /static-dns/abc", req.Path)
+	if api.records["abc"].Value != "10.0.0.2" {
+		t.Fatalf("updated value = %q, want 10.0.0.2", api.records["abc"].Value)
 	}
 }
 
 func TestDeleteRecord(t *testing.T) {
-	client, recorded := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	api := newStrictUniFiServer(t, DNSRecord{
+		ID: "abc", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true,
 	})
 
-	if err := client.DeleteRecord(context.Background(), "abc", "foo.example.com", "A"); err != nil {
+	if err := api.client(false).DeleteRecord(context.Background(), "abc", "foo.example.com", "A"); err != nil {
 		t.Fatalf("DeleteRecord: %v", err)
 	}
 
-	req := (*recorded)[0]
-	if req.Method != http.MethodDelete {
-		t.Errorf("Method = %s, want DELETE", req.Method)
+	req := api.requests[0]
+	if req.Method != http.MethodDelete || !strings.HasSuffix(req.Path, "/static-dns/abc") {
+		t.Fatalf("request = %s %s, want DELETE .../static-dns/abc", req.Method, req.Path)
 	}
-	if !strings.HasSuffix(req.Path, "/static-dns/abc") {
-		t.Errorf("Path = %s, expected /static-dns/abc suffix", req.Path)
-	}
-}
-
-func TestErrorPropagation(t *testing.T) {
-	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"errorCode":400,"message":"bad request"}`))
-	})
-
-	_, err := client.CreateRecord(context.Background(), DNSRecord{
-		Key: "foo", RecordType: "A", Value: "10.0.0.1",
-	})
-	if err == nil {
-		t.Fatal("expected error from 400 response, got nil")
-	}
-	if !strings.Contains(err.Error(), "400") {
-		t.Errorf("error should mention status 400: %v", err)
-	}
-	if !strings.Contains(err.Error(), "bad request") {
-		t.Errorf("error should include server body: %v", err)
+	if _, exists := api.records["abc"]; exists {
+		t.Fatal("record abc still exists after delete")
 	}
 }
 
-func TestDryRun_NoCalls(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("dry-run client should not make HTTP calls, got %s %s", r.Method, r.URL.Path)
-	}))
-	t.Cleanup(srv.Close)
+func TestNetworkError(t *testing.T) {
+	client := NewClient("https://unifi.example.com", testAPIKey, testSite, false, false)
+	client.http.Transport = failingTransport{}
 
-	dryClient := NewClient(srv.URL, testAPIKey, testSite, false, true /* dryRun */)
+	_, err := client.ListRecords(context.Background())
+	var networkErr *NetworkError
+	if !errors.As(err, &networkErr) {
+		t.Fatalf("ListRecords error = %T %v, want *NetworkError", err, err)
+	}
+}
 
-	if _, err := dryClient.CreateRecord(context.Background(), DNSRecord{
-		Key: "foo", RecordType: "A", Value: "10.0.0.1",
-	}); err != nil {
+func TestDryRun_NoMutationCalls(t *testing.T) {
+	api := newStrictUniFiServer(t)
+	client := api.client(true)
+
+	if _, err := client.CreateRecord(context.Background(), DNSRecord{Key: "foo", RecordType: "A", Value: "10.0.0.1"}); err != nil {
 		t.Errorf("dry-run CreateRecord error: %v", err)
 	}
-	if _, err := dryClient.UpdateRecord(context.Background(), DNSRecord{
-		ID: "x", Key: "foo", RecordType: "A", Value: "10.0.0.1",
-	}); err != nil {
+	if _, err := client.UpdateRecord(context.Background(), DNSRecord{ID: "x", Key: "foo", RecordType: "A", Value: "10.0.0.1"}); err != nil {
 		t.Errorf("dry-run UpdateRecord error: %v", err)
 	}
-	if err := dryClient.DeleteRecord(context.Background(), "x", "foo", "A"); err != nil {
+	if err := client.DeleteRecord(context.Background(), "x", "foo", "A"); err != nil {
 		t.Errorf("dry-run DeleteRecord error: %v", err)
 	}
+	if len(api.requests) != 0 {
+		t.Fatalf("dry-run mutations made HTTP requests: %+v", api.requests)
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connection refused")
 }

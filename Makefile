@@ -8,7 +8,7 @@ ifneq (,$(wildcard .env))
   export
 endif
 
-.PHONY: build run mock vet test clean docker-build docker-run docker-mock
+.PHONY: build run vet test clean docker-build docker-run
 
 ## build: compile the binary to ./docker-external-dns
 build:
@@ -18,17 +18,9 @@ build:
 run:
 	go run $(CMD)
 
-## mock: dry-run against your real UniFi controller — logs what would change, touches nothing
-mock:
-	DRY_RUN=true LOG_LEVEL=debug go run $(CMD)
-
 ## docker-run: build image and run via docker compose (production)
 docker-run:
 	docker compose up --build
-
-## docker-mock: spin up the agent + a whoami test container with the required labels
-docker-mock:
-	docker compose -f docker-compose.mock.yml up --build
 
 ## vet: run go vet
 vet:

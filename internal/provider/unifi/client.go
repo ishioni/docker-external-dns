@@ -115,39 +115,57 @@ func (c *Client) do(ctx context.Context, method, url string, body, out any) erro
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return &DataError{Operation: "marshal", DataType: "request body", Err: err}
 		}
 		bodyReader = bytes.NewReader(b)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return err
+		return &DataError{Operation: "create request", DataType: "HTTP request", Err: err}
 	}
 	req.Header.Set("X-Api-Key", c.apiKey)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return &NetworkError{Operation: method, URL: url, Err: err}
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return readAPIError(resp, method, url)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &DataError{Operation: "read", DataType: "response body", Err: err}
 	}
 
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
-			return fmt.Errorf("decode response: %w (body: %s)", err, string(respBody))
+			return &DataError{Operation: "unmarshal", DataType: "response body", Err: fmt.Errorf("%w (body: %s)", err, string(respBody))}
 		}
 	}
 	return nil
+}
+
+func readAPIError(resp *http.Response, method, url string) error {
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+	if err != nil {
+		return &DataError{Operation: "read", DataType: "error response body", Err: err}
+	}
+
+	apiErr := &APIError{
+		Operation:  method,
+		URL:        url,
+		StatusCode: resp.StatusCode,
+		Body:       string(respBody),
+	}
+	var unifiErr errorResponse
+	if err := json.Unmarshal(respBody, &unifiErr); err == nil {
+		apiErr.Message = unifiErr.Message
+	}
+	return apiErr
 }

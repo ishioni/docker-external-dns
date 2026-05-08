@@ -3,9 +3,9 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.6 — Auto-detect record type from target; drop record-type labels (2026-05-08)
+## Status: v0.7 — Strict UniFi HTTP contract tests; mock compose removed (2026-05-09)
 
-The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, and per-Traefik-router target/type/skip overrides.
+The core pipeline is implemented and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, per-Traefik-router target/type/skip overrides, and strict UniFi HTTP contract tests that exercise the real UniFi client against an in-process API simulator.
 
 Two real-world bugs were caught during manual testing and are now regression-guarded by tests:
 
@@ -38,13 +38,14 @@ Docker daemon → label parser → plan → UniFi static-DNS
 | `internal/controller/controller_test.go` | Reconcile tests with in-process fakes + debounce test |
 | `Dockerfile` | Multi-stage build → scratch final image |
 | `docker-compose.yml` | Example deployment |
-| `docker-compose.mock.yml` | Local test stack: agent + traefik/whoami container |
-| `Makefile` | `make build / run / mock / docker-mock / test / vet` |
+| `Makefile` | `make build / run / test / vet / docker-build / docker-run` |
 | `internal/source/traefik_test.go` | Table tests for label → endpoint extraction |
 | `internal/source/docker_test.go` | Endpoints aggregation, name parsing, event filters |
 | `internal/registry/txt_test.go` | TXT encode/decode round-trip + ownership tests |
 | `internal/plan/plan_test.go` | Diff engine: create/update/delete + safety guards |
-| `internal/provider/unifi/client_test.go` | HTTP client tests via `httptest.NewServer` |
+| `internal/provider/unifi/client_test.go` | Strict UniFi API simulator tests via `httptest.NewServer` |
+| `internal/provider/unifi/errors.go` | Typed UniFi API/network/data errors |
+| `internal/controller/unifi_integration_test.go` | End-to-end fake source → real controller → real UniFi client → fake UniFi API tests |
 
 ## Key design decisions
 
@@ -90,22 +91,20 @@ Source for UniFi wire format: https://github.com/kashalls/external-dns-unifi-web
 
 ## Test coverage
 
-Run with `make test` or `go test -race ./...`. All tests use stdlib only (no testcontainers, no Docker daemon needed).
+Run with `make test` or `go test -race ./...`. All tests use stdlib only (no testcontainers, no Docker daemon or real UniFi controller needed).
 
 | Package | What it covers |
 |---|---|
 | `internal/source` | Label → endpoint extraction: enable-flag gating, single/multi `Host()`, `\|\|` joining, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging, container/router target and record-type overrides, router skip. |
 | `internal/registry` | `TXTKey` and `ParseTXTKey` formatting/parsing, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
 | `internal/plan` | All Create/Update/Delete branches for A and CNAME plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
-| `internal/provider/unifi` | HTTP wire format: list shape, `X-Api-Key` header, A/CNAME include `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, error propagation, dry-run makes no calls. |
-| `internal/controller` | Reconcile → apply flow: create/update/delete record+TXT pairs, CNAME pair creation, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path. |
+| `internal/provider/unifi` | HTTP wire format: list shape, `_id`, `X-Api-Key`, `Accept`, `Content-Type`, A/CNAME include `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, typed API/network/data errors, dry-run makes no mutation calls. |
+| `internal/controller` | Reconcile → apply flow: create/update/delete record+TXT pairs, CNAME pair creation, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path, and integration tests through the real UniFi client against a strict fake UniFi API. |
 | `internal/source` (docker) | Endpoints aggregation across multiple containers, name slash-stripping, ID fallback, list error propagation, event filter correctness, channel pass-through. |
 
 ## Known gaps / future work
 
-- [ ] **UniFi response validation**: first real deployment may reveal mismatches in
-      JSON field casing (`Key` vs `key`). Check `_id` vs `id` in list vs create
-      responses — UniFi sometimes returns different shapes.
+- [x] **UniFi response validation**: strict tests now cover lower-case UniFi JSON fields, `_id` record IDs, request headers, TTL behavior, UniFi-style error JSON, invalid JSON, and controller flows through the real UniFi client.
 - [ ] **Standalone non-Traefik hosts**: add explicit labels such as
       `external-dns.hosts.<name>.*` for endpoints that do not have Traefik
       router rules.
