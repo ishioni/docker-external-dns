@@ -111,11 +111,11 @@ func (c *Controller) reconcile(ctx context.Context) {
 		"delete", len(changes.Delete),
 	)
 
-	created, updated, deleted, failed := 0, 0, 0, 0
+	created, updated, deleted, orphanCleaned, failed := 0, 0, 0, 0, 0
 
-	// Create new A + TXT pairs.
+	// Create new A/CNAME + TXT pairs.
 	for _, ep := range changes.Create {
-		if err := c.createPair(ctx, ep); err != nil {
+		if err := c.createPair(ctx, ep, current); err != nil {
 			log.Error("create failed", "hostname", ep.DNSName, "err", err)
 			failed++
 		} else {
@@ -143,10 +143,26 @@ func (c *Controller) reconcile(ctx context.Context) {
 		}
 	}
 
-	log.Info("reconcile done", "created", created, "updated", updated, "deleted", deleted, "failed", failed)
+	// Delete orphan TXT records (we own them but no companion A/CNAME and not desired).
+	for _, rec := range changes.OrphanTXT {
+		if err := c.provider.DeleteRecord(ctx, rec.ID, rec.Key, "TXT"); err != nil {
+			log.Error("orphan TXT delete failed", "key", rec.Key, "err", err)
+			failed++
+		} else {
+			orphanCleaned++
+		}
+	}
+
+	log.Info("reconcile done",
+		"created", created,
+		"updated", updated,
+		"deleted", deleted,
+		"orphan_txt_deleted", orphanCleaned,
+		"failed", failed,
+	)
 }
 
-func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint) error {
+func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
 	_, err := c.provider.CreateRecord(ctx, unifi.DNSRecord{
 		Key:        ep.DNSName,
 		RecordType: ep.RecordType,
@@ -157,11 +173,18 @@ func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint) error 
 	}
 
 	txtKey := registry.TXTKey(c.txtPrefix, ep.RecordType, ep.DNSName)
-	_, err = c.provider.CreateRecord(ctx, unifi.DNSRecord{
+	newTXT := unifi.DNSRecord{
 		Key:        txtKey,
 		RecordType: "TXT",
 		Value:      registry.EncodeTXT(ep.OwnerID, ep.Resource),
-	})
+	}
+	// Upsert: if an orphan TXT already exists at this key, update it instead of creating.
+	if existing := findRecord(current, txtKey, "TXT"); existing != nil {
+		newTXT.ID = existing.ID
+		_, err = c.provider.UpdateRecord(ctx, newTXT)
+	} else {
+		_, err = c.provider.CreateRecord(ctx, newTXT)
+	}
 	return err
 }
 
@@ -170,7 +193,7 @@ func (c *Controller) updatePair(ctx context.Context, ep *source.Endpoint, curren
 	aRec := findRecord(current, ep.DNSName, ep.RecordType)
 	if aRec == nil {
 		// Shouldn't happen (plan only adds updates for existing records), but handle gracefully.
-		return c.createPair(ctx, ep)
+		return c.createPair(ctx, ep, current)
 	}
 	aRec.Value = ep.Target
 	if _, err := c.provider.UpdateRecord(ctx, *aRec); err != nil {

@@ -3,7 +3,7 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.5 — CNAME and target override support (2026-05-07)
+## Status: v0.6 — Auto-detect record type from target; drop record-type labels (2026-05-08)
 
 The core pipeline is implemented, manually verified against a real UniFi controller, and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, and per-Traefik-router target/type/skip overrides.
 
@@ -49,7 +49,7 @@ Docker daemon → label parser → plan → UniFi static-DNS
 ## Key design decisions
 
 - **Auth**: X-Api-Key PAT only (UniFi Network 9.0+). No username/password fallback to keep the surface small. Add it later if needed.
-- **Record type**: A and CNAME records are supported. The target field carries an IP for A records and a hostname for CNAME records; UniFi performs final validation.
+- **Record type**: Inferred automatically from the resolved target — IPv4 → A, anything else → CNAME (AAAA explicitly out of scope). No `record-type` label exists; the target string is the single source of truth.
 - **Opt-in labels**: Only `external-dns.enabled=true` is required. Hostname extraction still reads Traefik router rules, but `traefik.enable=true` is no longer a gate.
 - **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.ishioni.casa` lives at `talos.a-postgres.ishioni.casa`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
 - **Ownership safety**: Records without matching owner TXT are never deleted.
@@ -61,19 +61,17 @@ Container-level defaults apply to all routers from the container:
 
 ```yaml
 external-dns.enabled: "true"
-external-dns.target: "<ip-or-hostname>"
-external-dns.record-type: "A" # or "CNAME"
+external-dns.target: "<ip-or-hostname>"  # IPv4 → A, hostname → CNAME
 ```
 
 Per-router overrides are matched by router name from `traefik.http.routers.<name>.rule`:
 
 ```yaml
 external-dns.routers.<name>.target: "<ip-or-hostname>"
-external-dns.routers.<name>.record-type: "A" # or "CNAME"
 external-dns.routers.<name>.skip: "true"
 ```
 
-Precedence per router: per-router override → container-level → global default (`DEFAULT_TARGET_IP` / `A`).
+Precedence per router: per-router override → container-level → global default (`DEFAULT_TARGET`). Record type is auto-detected from whichever target wins.
 
 ## Wire format reference
 
@@ -111,14 +109,8 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 - [ ] **Standalone non-Traefik hosts**: add explicit labels such as
       `external-dns.hosts.<name>.*` for endpoints that do not have Traefik
       router rules.
-- [ ] **Username/password fallback**: for UniFi Network < 9.0 PAT support. The
-      kashalls webhook does CSRF-token refresh on each response — mirror that.
 - [ ] **Prometheus metrics**: `records_created_total`, `records_deleted_total`,
       `reconcile_errors_total`, `reconcile_duration_seconds`.
-- [ ] **Multiple record types**: AAAA (IPv6), MX — unlikely needed but keep the
-      `RecordType` field propagated through the pipeline so adding them is trivial.
-- [ ] **Graceful cleanup on shutdown**: optionally delete all owned records when the
-      agent exits (controlled by `CLEANUP_ON_EXIT` env var).
 - [x] **CI**: `.github/workflows/ci.yml` runs `go vet` + `go test -race` on PRs. `.github/workflows/release.yml` builds multi-arch Docker image (amd64 + arm64, native runners) and pushes to `ghcr.io/ishioni/docker-external-dns` when a `v*` tag is pushed.
 
 ## Dependency notes

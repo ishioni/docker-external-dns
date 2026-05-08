@@ -132,12 +132,11 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: []endpointWant{{DNSName: "foo.example.com", Target: "10.9.8.7", RecordType: "A"}},
 		},
 		{
-			name:      "container record type CNAME",
+			name:      "hostname target auto-detects as CNAME",
 			container: "c1",
 			labels: map[string]string{
 				"external-dns.enabled":          "true",
 				"external-dns.target":           "traefik.example.com",
-				"external-dns.record-type":      "cname",
 				"traefik.http.routers.foo.rule": "Host(`foo.example.com`)",
 			},
 			want: []endpointWant{{DNSName: "foo.example.com", Target: "traefik.example.com", RecordType: "CNAME"}},
@@ -168,14 +167,13 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: []endpointWant{{DNSName: "foo.example.com", Target: "10.1.1.9", RecordType: "A"}},
 		},
 		{
-			name:      "router record type only affects matching router",
+			name:      "hostname router target auto-detects as CNAME",
 			container: "c1",
 			labels: map[string]string{
-				"external-dns.enabled":                 "true",
-				"external-dns.routers.foo.target":      "traefik.example.com",
-				"external-dns.routers.foo.record-type": "CNAME",
-				"traefik.http.routers.foo.rule":        "Host(`foo.example.com`)",
-				"traefik.http.routers.bar.rule":        "Host(`bar.example.com`)",
+				"external-dns.enabled":            "true",
+				"external-dns.routers.foo.target": "traefik.example.com",
+				"traefik.http.routers.foo.rule":   "Host(`foo.example.com`)",
+				"traefik.http.routers.bar.rule":   "Host(`bar.example.com`)",
 			},
 			want: []endpointWant{
 				{DNSName: "bar.example.com", Target: defaultTarget, RecordType: "A"},
@@ -194,14 +192,13 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: []endpointWant{{DNSName: "bar.example.com", Target: defaultTarget, RecordType: "A"}},
 		},
 		{
-			name:      "rustfs style mixed routers",
+			name:      "rustfs style mixed routers: IP default + hostname override",
 			container: "rustfs",
 			labels: map[string]string{
-				"external-dns.enabled":                     "true",
-				"external-dns.routers.console.target":      "traefik.example.com",
-				"external-dns.routers.console.record-type": "CNAME",
-				"traefik.http.routers.s3.rule":             "Host(`bucket.example.com`)",
-				"traefik.http.routers.console.rule":        "Host(`console.example.com`)",
+				"external-dns.enabled":                "true",
+				"external-dns.routers.console.target": "traefik.example.com",
+				"traefik.http.routers.s3.rule":        "Host(`bucket.example.com`)",
+				"traefik.http.routers.console.rule":   "Host(`console.example.com`)",
 			},
 			want: []endpointWant{
 				{DNSName: "bucket.example.com", Target: defaultTarget, RecordType: "A"},
@@ -254,6 +251,31 @@ func equalEndpoints(a, b []endpointWant) bool {
 		}
 	}
 	return true
+}
+
+func TestDetectRecordType(t *testing.T) {
+	tests := []struct {
+		target string
+		want   string
+	}{
+		{"10.0.0.1", "A"},
+		{"192.168.1.254", "A"},
+		{"10.1.2.241", "A"},
+		{"traefik.example.com", "CNAME"},
+		{"my-host.internal", "CNAME"},
+		{"::1", "CNAME"},           // IPv6 falls through to CNAME (AAAA not supported yet)
+		{"2001:db8::1", "CNAME"},   // IPv6 falls through to CNAME
+		{"", "CNAME"},              // empty string → CNAME
+		{"not-an-ip.foo", "CNAME"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			got := detectRecordType(tt.target)
+			if got != tt.want {
+				t.Errorf("detectRecordType(%q) = %q, want %q", tt.target, got, tt.want)
+			}
+		})
+	}
 }
 
 func equalSlices(a, b []string) bool {

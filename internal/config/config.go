@@ -19,7 +19,7 @@ type Config struct {
 	DockerHost string
 
 	// DNS
-	DefaultTargetIP   string
+	DefaultTarget     string
 	OwnerID           string
 	TxtPrefix         string
 	ReconcileInterval time.Duration
@@ -51,9 +51,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("UNIFI_API_KEY is required")
 	}
 
-	cfg.DefaultTargetIP = os.Getenv("DEFAULT_TARGET_IP")
-	if cfg.DefaultTargetIP == "" {
-		return nil, fmt.Errorf("DEFAULT_TARGET_IP is required")
+	cfg.DefaultTarget = os.Getenv("DEFAULT_TARGET")
+	if cfg.DefaultTarget == "" {
+		return nil, fmt.Errorf("DEFAULT_TARGET is required")
 	}
 
 	interval := getEnvDefault("RECONCILE_INTERVAL", "5m")

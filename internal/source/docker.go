@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -49,6 +50,10 @@ func (s *DockerSource) Endpoints(ctx context.Context) ([]*Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	sort.Slice(containers, func(i, j int) bool {
+		return containerName(containers[i]) < containerName(containers[j])
+	})
 
 	var all []*Endpoint
 	for _, c := range containers {

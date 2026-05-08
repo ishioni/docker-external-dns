@@ -4,12 +4,14 @@
 package plan
 
 import (
+	"log/slog"
+
 	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
 	"github.com/ishioni/docker-external-dns/internal/registry"
 	"github.com/ishioni/docker-external-dns/internal/source"
 )
 
-// Changes holds the three buckets of DNS work to perform.
+// Changes holds the buckets of DNS work to perform.
 type Changes struct {
 	// Create holds endpoints that don't yet have a matching record in UniFi.
 	Create []*source.Endpoint
@@ -17,6 +19,9 @@ type Changes struct {
 	Update []*source.Endpoint
 	// Delete holds A/CNAME records owned by us that are no longer in the desired set.
 	Delete []unifi.DNSRecord
+	// OrphanTXT holds TXT ownership records we own that have no companion A/CNAME
+	// and are no longer desired. They should be deleted to keep UniFi clean.
+	OrphanTXT []unifi.DNSRecord
 }
 
 type recordKey struct {
@@ -53,25 +58,40 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txt
 		}
 	}
 
-	// Build desired set indexed by hostname and record type.
+	// Build desired set; detect collisions (same hostname+type from two containers).
+	// Upstream callers sort containers by name, so "first" is deterministic.
 	desiredByKey := make(map[recordKey]*source.Endpoint, len(desired))
 	for _, ep := range desired {
-		desiredByKey[recordKey{Hostname: ep.DNSName, RecordType: ep.RecordType}] = ep
+		key := recordKey{Hostname: ep.DNSName, RecordType: ep.RecordType}
+		if existing, collision := desiredByKey[key]; collision {
+			slog.Warn("hostname collision: two containers claim the same record; keeping first",
+				"hostname", ep.DNSName,
+				"record_type", ep.RecordType,
+				"winner", existing.Resource,
+				"dropped", ep.Resource,
+			)
+			continue
+		}
+		desiredByKey[key] = ep
 	}
 
 	var changes Changes
 
 	// Determine creates and updates.
-	for _, ep := range desired {
-		key := recordKey{Hostname: ep.DNSName, RecordType: ep.RecordType}
+	for key, ep := range desiredByKey {
 		existing, exists := aOrCnameByKey[key]
 		if !exists {
 			changes.Create = append(changes.Create, ep)
+		} else if !owned[key] {
+			// Record exists in UniFi but we did not create it — warn every reconcile.
+			slog.Warn("unowned record at desired hostname; skipping until manually resolved",
+				"hostname", key.Hostname,
+				"record_type", key.RecordType,
+				"current_value", existing.Value,
+				"desired_value", ep.Target,
+			)
 		} else if existing.Value != ep.Target {
-			// Record exists but with wrong target — update it only if we own it.
-			if owned[key] {
-				changes.Update = append(changes.Update, ep)
-			}
+			changes.Update = append(changes.Update, ep)
 		}
 	}
 
@@ -80,6 +100,18 @@ func Compute(desired []*source.Endpoint, current []unifi.DNSRecord, ownerID, txt
 		if _, wanted := desiredByKey[key]; !wanted {
 			if rec, ok := aOrCnameByKey[key]; ok {
 				changes.Delete = append(changes.Delete, rec)
+			}
+		}
+	}
+
+	// Find orphan TXTs: owned TXTs with no companion A/CNAME that are also not desired.
+	for key := range owned {
+		if _, exists := aOrCnameByKey[key]; !exists {
+			if _, wanted := desiredByKey[key]; !wanted {
+				txtKey := registry.TXTKey(txtPrefix, key.RecordType, key.Hostname)
+				if txtRec, ok := txtByKey[txtKey]; ok {
+					changes.OrphanTXT = append(changes.OrphanTXT, txtRec)
+				}
 			}
 		}
 	}

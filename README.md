@@ -37,7 +37,7 @@ created records are safe.
 # .env
 UNIFI_HOST=https://10.1.2.1
 UNIFI_API_KEY=<PAT from UniFi Network settings>
-DEFAULT_TARGET_IP=10.1.2.241
+DEFAULT_TARGET=10.1.2.241
 ```
 
 ```bash
@@ -50,7 +50,7 @@ docker compose up -d
 | --- | --- | --- |
 | `UNIFI_HOST` | **required** | UniFi controller URL, e.g. `https://10.1.2.1` |
 | `UNIFI_API_KEY` | **required** | Personal Access Token from UniFi Network |
-| `DEFAULT_TARGET_IP` | **required** | Default target used when labels do not override it |
+| `DEFAULT_TARGET` | **required** | Default target. IPv4 → A record, hostname → CNAME |
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `UNIFI_INSECURE_SKIP_VERIFY` | `true` | Skip TLS verification (self-signed certs) |
 | `TXT_OWNER` | `docker-external-dns` | Scopes TXT ownership; change if running multiple instances |
@@ -79,24 +79,28 @@ traefik.http.routers.myapp.rule: Host(`foo.example.com`) || Host(`bar.example.co
 
 `HostRegexp(...)` entries are skipped — they cannot be materialized into DNS records.
 
-Container-level overrides apply to every router from that container:
+### Record type detection
+
+Record type is inferred automatically from the target value: an **IPv4 address** produces an **A record**, and a **hostname** produces a **CNAME**. There is no `record-type` label — the target string is the single source of truth.
+
+A container-level target override applies to every router from that container:
 
 ```yaml
 labels:
   external-dns.enabled: "true"
-  external-dns.target: "traefik.example.com"
-  external-dns.record-type: "CNAME"
+  external-dns.target: "traefik.example.com"   # hostname → CNAME for all routers
 ```
 
-Per-router overrides take precedence:
+Per-router target overrides take precedence, and each router's type is detected independently:
 
 ```yaml
 labels:
   external-dns.enabled: "true"
   traefik.http.routers.s3.rule: Host(`bucket.example.com`)
   traefik.http.routers.console.rule: Host(`console.example.com`)
-  external-dns.routers.console.record-type: "CNAME"
   external-dns.routers.console.target: "traefik.example.com"
+  # bucket.example.com → A (uses DEFAULT_TARGET, an IP)
+  # console.example.com → CNAME (hostname override)
 ```
 
 ## Getting a UniFi PAT

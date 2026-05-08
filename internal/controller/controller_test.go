@@ -291,6 +291,57 @@ func TestReconcile_SkipsForeignOwnedRecord(t *testing.T) {
 	}
 }
 
+func TestReconcile_RecreateMissingA_UpsertsTXT(t *testing.T) {
+	// Orphan TXT exists (we own it), A record is missing, hostname still desired.
+	// Expect: CreateRecord for A, UpdateRecord (not CreateRecord) for the TXT.
+	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			ownedTXT("t1", "foo.example.com", testOwner), // TXT present, A missing
+		},
+	}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	creates := opKeys(prov.calls, "create")
+	updates := opKeys(prov.calls, "update")
+	if !containsAll(creates, []string{"foo.example.com"}) {
+		t.Errorf("expected create for A record, got creates: %v", creates)
+	}
+	if containsAll(creates, []string{"a-foo.example.com"}) {
+		t.Errorf("TXT should be updated, not created; got creates: %v", creates)
+	}
+	if !containsAll(updates, []string{"a-foo.example.com"}) {
+		t.Errorf("expected update for orphan TXT, got updates: %v", updates)
+	}
+}
+
+func TestReconcile_DeletesOrphanTXT(t *testing.T) {
+	// Orphan TXT exists (we own it), A record is missing, hostname not desired.
+	// Expect: one delete call for the TXT with RecordType=TXT.
+	src := &fakeSource{endpoints: nil}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			ownedTXT("t1", "foo.example.com", testOwner), // TXT present, A missing, not desired
+		},
+	}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	if countOp(prov.calls, "create") != 0 || countOp(prov.calls, "update") != 0 {
+		t.Errorf("expected no creates or updates, got: %v", prov.calls)
+	}
+	deletes := opKeys(prov.calls, "delete")
+	if !containsAll(deletes, []string{"a-foo.example.com"}) {
+		t.Errorf("expected delete for orphan TXT a-foo.example.com, got: %v", deletes)
+	}
+	for _, c := range prov.calls {
+		if c.Op == "delete" && c.Record.Key == "a-foo.example.com" {
+			if c.Record.RecordType != "TXT" {
+				t.Errorf("orphan TXT delete has RecordType = %q, want TXT", c.Record.RecordType)
+			}
+		}
+	}
+}
+
 func TestReconcile_ContinuesAfterCreateError(t *testing.T) {
 	src := &fakeSource{endpoints: []*source.Endpoint{
 		ep("foo.example.com", "10.0.0.1"),

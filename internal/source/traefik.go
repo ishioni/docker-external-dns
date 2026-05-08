@@ -3,22 +3,30 @@ package source
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 const (
 	labelExternalDNSEnable       = "external-dns.enabled"
 	labelExternalDNSTarget       = "external-dns.target"
-	labelExternalDNSRecordType   = "external-dns.record-type"
 	labelExternalDNSRouterPrefix = "external-dns.routers."
 	labelRouterRulePrefix        = "traefik.http.routers."
 	labelRouterRuleSuffix        = ".rule"
-	defaultRecordType            = "A"
 )
 
 // hostExtract matches Host(`foo.example.com`) entries in a Traefik rule string.
 var hostExtract = regexp.MustCompile("Host\\(`([^`]+)`\\)")
+
+// detectRecordType returns "A" for IPv4 targets and "CNAME" for everything else.
+func detectRecordType(target string) string {
+	if ip := net.ParseIP(target); ip != nil && ip.To4() != nil {
+		return "A"
+	}
+	return "CNAME"
+}
 
 // EndpointsFromLabels parses a container's labels and returns the desired DNS
 // endpoints. Returns nil if the container is not in scope.
@@ -28,13 +36,11 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 	}
 
 	type routerOverride struct {
-		target     string
-		recordType string
-		skip       bool
+		target string
+		skip   bool
 	}
 
 	containerTarget := labels[labelExternalDNSTarget]
-	containerRecordType := labels[labelExternalDNSRecordType]
 	routerRules := make(map[string]string)
 	routerOverrides := make(map[string]routerOverride)
 
@@ -53,16 +59,21 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 		switch field {
 		case "target":
 			ro.target = val
-		case "record-type":
-			ro.recordType = val
 		case "skip":
 			ro.skip = isTrue(val)
 		}
 		routerOverrides[routerName] = ro
 	}
 
+	routerNames := make([]string, 0, len(routerRules))
+	for name := range routerRules {
+		routerNames = append(routerNames, name)
+	}
+	sort.Strings(routerNames)
+
 	var endpoints []*Endpoint
-	for routerName, rule := range routerRules {
+	for _, routerName := range routerNames {
+		rule := routerRules[routerName]
 		ro := routerOverrides[routerName]
 		if ro.skip {
 			continue
@@ -76,13 +87,7 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 			target = ro.target
 		}
 
-		recordType := defaultRecordType
-		if containerRecordType != "" {
-			recordType = strings.ToUpper(containerRecordType)
-		}
-		if ro.recordType != "" {
-			recordType = strings.ToUpper(ro.recordType)
-		}
+		recordType := detectRecordType(target)
 
 		for _, match := range hostExtract.FindAllStringSubmatch(rule, -1) {
 			host := match[1]
@@ -123,7 +128,7 @@ func parseRouterLabel(key string) (name, field string, ok bool) {
 		return "", "", false
 	}
 	switch field {
-	case "target", "record-type", "skip":
+	case "target", "skip":
 		return name, field, true
 	default:
 		return "", "", false

@@ -53,12 +53,13 @@ func ownedTXTType(prefix, id, recordType, hostname, owner string) unifi.DNSRecor
 
 func TestCompute(t *testing.T) {
 	tests := []struct {
-		name       string
-		desired    []*source.Endpoint
-		current    []unifi.DNSRecord
-		wantCreate []string
-		wantUpdate []string
-		wantDelete []string
+		name        string
+		desired     []*source.Endpoint
+		current     []unifi.DNSRecord
+		wantCreate  []string
+		wantUpdate  []string
+		wantDelete  []string
+		wantOrphan  []string
 	}{
 		{
 			name: "empty desired and current",
@@ -168,6 +169,37 @@ func TestCompute(t *testing.T) {
 			wantCreate: []string{"CNAME:foo.example.com"},
 			wantDelete: []string{"A:foo.example.com"},
 		},
+		{
+			name: "collision: two desired endpoints for the same hostname, only one create",
+			desired: []*source.Endpoint{
+				endpointType("foo.example.com", "10.0.0.1", "A"),
+				endpointType("foo.example.com", "10.0.0.2", "A"),
+			},
+			wantCreate: []string{"A:foo.example.com"},
+		},
+		{
+			name: "unowned existing record: warn but no create, update, or delete",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
+			current: []unifi.DNSRecord{
+				aRecord("a1", "foo.example.com", "10.0.0.1"),
+				// no TXT — not managed by us
+			},
+		},
+		{
+			name: "orphan TXT with desired hostname: create A, no orphan",
+			desired: []*source.Endpoint{endpoint("foo.example.com", "10.0.0.1")},
+			current: []unifi.DNSRecord{
+				ownedTXT("t1", "foo.example.com", ownerID), // TXT present, A missing
+			},
+			wantCreate: []string{"A:foo.example.com"},
+		},
+		{
+			name: "orphan TXT with no desired hostname: added to OrphanTXT",
+			current: []unifi.DNSRecord{
+				ownedTXT("t1", "foo.example.com", ownerID), // TXT present, A missing, not desired
+			},
+			wantOrphan: []string{"TXT:a-foo.example.com"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -177,6 +209,7 @@ func TestCompute(t *testing.T) {
 			gotCreate := endpointKeys(got.Create)
 			gotUpdate := endpointKeys(got.Update)
 			gotDelete := recordKeys(got.Delete)
+			gotOrphan := recordKeys(got.OrphanTXT)
 
 			if !sameSet(gotCreate, tt.wantCreate) {
 				t.Errorf("Create = %v, want %v", gotCreate, tt.wantCreate)
@@ -186,6 +219,9 @@ func TestCompute(t *testing.T) {
 			}
 			if !sameSet(gotDelete, tt.wantDelete) {
 				t.Errorf("Delete = %v, want %v", gotDelete, tt.wantDelete)
+			}
+			if !sameSet(gotOrphan, tt.wantOrphan) {
+				t.Errorf("OrphanTXT = %v, want %v", gotOrphan, tt.wantOrphan)
 			}
 		})
 	}

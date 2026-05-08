@@ -58,13 +58,13 @@ func main() {
 		"txt_prefix", cfg.TxtPrefix,
 		"unifi_host", cfg.UnifiHost,
 		"unifi_site", cfg.UnifiSite,
-		"default_target_ip", cfg.DefaultTargetIP,
+		"default_target", cfg.DefaultTarget,
 		"docker_host", cfg.DockerHost,
 		"reconcile_interval", cfg.ReconcileInterval,
 		"dry_run", cfg.DryRun,
 	)
 
-	dockerSrc, err := source.NewDockerSource(cfg.DockerHost, cfg.DefaultTargetIP, cfg.OwnerID)
+	dockerSrc, err := source.NewDockerSource(cfg.DockerHost, cfg.DefaultTarget, cfg.OwnerID)
 	if err != nil {
 		slog.Error("failed to create docker client", "err", err)
 		os.Exit(1)
