@@ -52,7 +52,7 @@ Docker daemon → label parser → plan → UniFi static-DNS
 - **Auth**: X-Api-Key PAT only (UniFi Network 9.0+). No username/password fallback to keep the surface small. Add it later if needed.
 - **Record type**: Inferred automatically from the resolved target — IPv4 → A, anything else → CNAME (AAAA explicitly out of scope). No `record-type` label exists; the target string is the single source of truth.
 - **Opt-in labels**: Only `external-dns.enabled=true` is required. Hostname extraction still reads Traefik router rules, but `traefik.enable=true` is no longer a gate.
-- **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.ishioni.casa` lives at `talos.a-postgres.ishioni.casa`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
+- **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.example.com` lives at `talos.a-postgres.example.com`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
 - **Ownership safety**: Records without matching owner TXT are never deleted.
 - **Debounce**: Docker events are debounced 2s before triggering a reconcile to coalesce rapid restarts.
 
@@ -110,11 +110,10 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
       router rules.
 - [ ] **Prometheus metrics**: `records_created_total`, `records_deleted_total`,
       `reconcile_errors_total`, `reconcile_duration_seconds`.
-- [x] **CI**: `.github/workflows/ci.yml` runs `go vet` + `go test -race` on PRs. `.github/workflows/release.yml` builds multi-arch Docker image (amd64 + arm64, native runners) and pushes to `ghcr.io/ishioni/docker-external-dns` when a `v*` tag is pushed.
 
 ## Dependency notes
 
 - `github.com/docker/docker` — Docker SDK for Go; used for container listing and event streaming.
 - No external HTTP client lib — uses stdlib `net/http`.
 - No external logging lib — uses stdlib `log/slog` (Go 1.21+).
-- Go 1.23+ required.
+- Go 1.26+ required.
