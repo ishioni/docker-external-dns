@@ -17,6 +17,7 @@ services:
       UNIFI_INSECURE_SKIP_VERIFY: ${UNIFI_INSECURE_SKIP_VERIFY:-true}
       TXT_OWNER: ${TXT_OWNER:-docker-external-dns}
       TXT_PREFIX: ${TXT_PREFIX:-}
+      POLICY: ${POLICY:-sync}
       RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-5m}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}

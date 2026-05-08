@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ishioni/docker-external-dns/internal/config"
 	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
 	"github.com/ishioni/docker-external-dns/internal/registry"
 	"github.com/ishioni/docker-external-dns/internal/source"
@@ -129,7 +130,7 @@ func TestReconcileWithUniFiClient_CreatesTXTBeforeRecord(t *testing.T) {
 	api := newControllerUniFiAPI(t)
 	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
 
-	New(src, api.provider(), testOwner, "", time.Hour).reconcile(context.Background())
+	New(src, api.provider(), testOwner, "", config.PolicySync, time.Hour).reconcile(context.Background())
 
 	assertHTTPBefore(t, api.calls, http.MethodPost, "a-foo.example.com", http.MethodPost, "foo.example.com")
 	assertHTTPBodyHasNoTTL(t, api.calls, "a-foo.example.com")
@@ -149,7 +150,7 @@ func TestReconcileWithUniFiClient_ReplacesTypeBeforeCreate(t *testing.T) {
 	)
 	src := &fakeSource{endpoints: []*source.Endpoint{epType("foo.example.com", "target.example.com", "CNAME")}}
 
-	New(src, api.provider(), testOwner, "", time.Hour).reconcile(context.Background())
+	New(src, api.provider(), testOwner, "", config.PolicySync, time.Hour).reconcile(context.Background())
 
 	assertHTTPBefore(t, api.calls, http.MethodDelete, "foo.example.com", http.MethodPost, "cname-foo.example.com")
 	assertHTTPBefore(t, api.calls, http.MethodDelete, "a-foo.example.com", http.MethodPost, "cname-foo.example.com")
@@ -162,7 +163,7 @@ func TestReconcileWithUniFiClient_TXTFailurePreventsRecordCreate(t *testing.T) {
 	api.failCreate = "a-foo.example.com"
 	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
 
-	New(src, api.provider(), testOwner, "", time.Hour).reconcile(context.Background())
+	New(src, api.provider(), testOwner, "", config.PolicySync, time.Hour).reconcile(context.Background())
 
 	if idx := httpCallIndex(api.calls, http.MethodPost, "foo.example.com"); idx >= 0 {
 		t.Fatalf("A record was created after TXT create failure, calls: %+v", api.calls)

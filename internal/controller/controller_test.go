@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ishioni/docker-external-dns/internal/config"
 	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
 	"github.com/ishioni/docker-external-dns/internal/registry"
 	"github.com/ishioni/docker-external-dns/internal/source"
@@ -162,7 +163,11 @@ func countOp(calls []providerCall, op string) int {
 }
 
 func newCtrl(src *fakeSource, prov *fakeProvider) *Controller {
-	return New(src, prov, testOwner, "", time.Hour)
+	return New(src, prov, testOwner, "", config.PolicySync, time.Hour)
+}
+
+func newCtrlPolicy(src *fakeSource, prov *fakeProvider, policy config.Policy) *Controller {
+	return New(src, prov, testOwner, "", policy, time.Hour)
 }
 
 // ---- reconcile tests ----
@@ -382,6 +387,117 @@ func TestReconcile_DeletesOrphanTXT(t *testing.T) {
 	}
 }
 
+func TestReconcile_UpsertOnlyDoesNotDeleteStalePairOrOrphanTXT(t *testing.T) {
+	src := &fakeSource{endpoints: nil}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			aRec("a1", "foo.example.com", "10.0.0.1"),
+			ownedTXT("t1", "foo.example.com", testOwner),
+			ownedTXT("t2", "orphan.example.com", testOwner),
+		},
+	}
+	newCtrlPolicy(src, prov, config.PolicyUpsertOnly).reconcile(context.Background())
+
+	if countOp(prov.calls, "delete") != 0 {
+		t.Fatalf("upsert-only must not delete stale records or orphan TXT, got: %v", prov.calls)
+	}
+}
+
+func TestReconcile_UpsertOnlyUpdatesAndReplaces(t *testing.T) {
+	t.Run("update", func(t *testing.T) {
+		src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.2")}}
+		prov := &fakeProvider{
+			initial: []unifi.DNSRecord{
+				aRec("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", testOwner),
+			},
+		}
+		newCtrlPolicy(src, prov, config.PolicyUpsertOnly).reconcile(context.Background())
+
+		if !containsAll(opKeys(prov.calls, "update"), []string{"foo.example.com", "a-foo.example.com"}) {
+			t.Fatalf("upsert-only should update owned records, got calls: %v", prov.calls)
+		}
+	})
+
+	t.Run("replace", func(t *testing.T) {
+		src := &fakeSource{endpoints: []*source.Endpoint{epType("foo.example.com", "target.example.com", "CNAME")}}
+		prov := &fakeProvider{
+			initial: []unifi.DNSRecord{
+				aRec("a1", "foo.example.com", "10.0.0.1"),
+				ownedTXT("t1", "foo.example.com", testOwner),
+			},
+		}
+		newCtrlPolicy(src, prov, config.PolicyUpsertOnly).reconcile(context.Background())
+
+		if !containsAll(opKeys(prov.calls, "delete"), []string{"foo.example.com", "a-foo.example.com"}) {
+			t.Fatalf("upsert-only should allow replacement deletes, got calls: %v", prov.calls)
+		}
+		if !containsAll(opKeys(prov.calls, "create"), []string{"foo.example.com", "cname-foo.example.com"}) {
+			t.Fatalf("upsert-only should create replacement pair, got calls: %v", prov.calls)
+		}
+	})
+}
+
+func TestReconcile_CreateOnlyCreatesOnly(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{
+		ep("new.example.com", "10.0.0.2"),
+		ep("foo.example.com", "10.0.0.2"),
+		epType("flip.example.com", "target.example.com", "CNAME"),
+	}}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			aRec("a1", "foo.example.com", "10.0.0.1"),
+			ownedTXT("t1", "foo.example.com", testOwner),
+			aRec("a2", "stale.example.com", "10.0.0.1"),
+			ownedTXT("t2", "stale.example.com", testOwner),
+			aRec("a3", "flip.example.com", "10.0.0.1"),
+			ownedTXT("t3", "flip.example.com", testOwner),
+		},
+	}
+	newCtrlPolicy(src, prov, config.PolicyCreateOnly).reconcile(context.Background())
+
+	if !containsAll(opKeys(prov.calls, "create"), []string{"new.example.com", "a-new.example.com"}) {
+		t.Fatalf("create-only should create missing pair, got calls: %v", prov.calls)
+	}
+	if countOp(prov.calls, "update") != 0 || countOp(prov.calls, "delete") != 0 {
+		t.Fatalf("create-only must not update or delete, got calls: %v", prov.calls)
+	}
+	if containsAll(opKeys(prov.calls, "create"), []string{"flip.example.com"}) {
+		t.Fatalf("create-only must not replace type flips, got calls: %v", prov.calls)
+	}
+}
+
+func TestReconcile_CreateOnlyDoesNotUpdateOwnedOrphanTXT(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			ownedTXT("t1", "foo.example.com", testOwner),
+		},
+	}
+	newCtrlPolicy(src, prov, config.PolicyCreateOnly).reconcile(context.Background())
+
+	if !containsAll(opKeys(prov.calls, "create"), []string{"foo.example.com"}) {
+		t.Fatalf("create-only should create missing A record, got calls: %v", prov.calls)
+	}
+	if countOp(prov.calls, "update") != 0 {
+		t.Fatalf("create-only must not update existing TXT, got calls: %v", prov.calls)
+	}
+}
+
+func TestReconcile_DoesNotClaimForeignOrphanTXT(t *testing.T) {
+	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
+	prov := &fakeProvider{
+		initial: []unifi.DNSRecord{
+			ownedTXT("t1", "foo.example.com", "someone-else"),
+		},
+	}
+	newCtrl(src, prov).reconcile(context.Background())
+
+	if countOp(prov.calls, "update") != 0 || countOp(prov.calls, "create") != 0 {
+		t.Fatalf("must not claim foreign TXT or create record behind it, got calls: %v", prov.calls)
+	}
+}
+
 func TestReconcile_ContinuesAfterCreateError(t *testing.T) {
 	src := &fakeSource{endpoints: []*source.Endpoint{
 		ep("foo.example.com", "10.0.0.1"),
@@ -426,7 +542,7 @@ func TestRun_DebouncesEventsAndReconciles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ctrl := New(src, prov, testOwner, "", time.Hour)
+	ctrl := New(src, prov, testOwner, "", config.PolicySync, time.Hour)
 	go ctrl.Run(ctx)
 
 	// Emit one event to trigger the debounce path.
@@ -448,7 +564,7 @@ func TestReconcile_RespectsTXTPrefix(t *testing.T) {
 	const prefix = "userprefix."
 	src := &fakeSource{endpoints: []*source.Endpoint{ep("foo.example.com", "10.0.0.1")}}
 	prov := &fakeProvider{}
-	ctrl := New(src, prov, testOwner, prefix, time.Hour)
+	ctrl := New(src, prov, testOwner, prefix, config.PolicySync, time.Hour)
 	ctrl.reconcile(context.Background())
 
 	creates := opKeys(prov.calls, "create")

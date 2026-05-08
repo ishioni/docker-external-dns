@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/ishioni/docker-external-dns/internal/config"
 	"github.com/ishioni/docker-external-dns/internal/plan"
 	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
 	"github.com/ishioni/docker-external-dns/internal/registry"
@@ -17,22 +19,24 @@ type Controller struct {
 	provider  Provider
 	ownerID   string
 	txtPrefix string
+	policy    config.Policy
 	interval  time.Duration
 }
 
-func New(src Source, provider Provider, ownerID, txtPrefix string, interval time.Duration) *Controller {
+func New(src Source, provider Provider, ownerID, txtPrefix string, policy config.Policy, interval time.Duration) *Controller {
 	return &Controller{
 		source:    src,
 		provider:  provider,
 		ownerID:   ownerID,
 		txtPrefix: txtPrefix,
+		policy:    policy,
 		interval:  interval,
 	}
 }
 
 // Run starts the reconcile loop. It blocks until ctx is cancelled.
 func (c *Controller) Run(ctx context.Context) {
-	slog.Info("starting controller", "owner_id", c.ownerID, "reconcile_interval", c.interval)
+	slog.Info("starting controller", "owner_id", c.ownerID, "policy", c.policy, "reconcile_interval", c.interval)
 
 	// Initial reconcile.
 	c.reconcile(ctx)
@@ -105,11 +109,20 @@ func (c *Controller) reconcile(ctx context.Context) {
 	}
 
 	changes := plan.Compute(desired, current, c.ownerID, c.txtPrefix)
+	planned := changes
+	changes = applyPolicy(changes, c.policy)
 	log.Info("reconcile plan computed",
 		"create", len(changes.Create),
 		"update", len(changes.Update),
 		"replace", len(changes.Replace),
 		"delete", len(changes.Delete),
+		"orphan_txt", len(changes.OrphanTXT),
+		"policy", c.policy,
+		"planned_create", len(planned.Create),
+		"planned_update", len(planned.Update),
+		"planned_replace", len(planned.Replace),
+		"planned_delete", len(planned.Delete),
+		"planned_orphan_txt", len(planned.OrphanTXT),
 	)
 
 	created, updated, deleted, orphanCleaned, failed := 0, 0, 0, 0, 0
@@ -174,6 +187,25 @@ func (c *Controller) reconcile(ctx context.Context) {
 	)
 }
 
+func applyPolicy(changes plan.Changes, policy config.Policy) plan.Changes {
+	switch policy {
+	case config.PolicySync:
+		return changes
+	case config.PolicyUpsertOnly:
+		changes.Delete = nil
+		changes.OrphanTXT = nil
+		return changes
+	case config.PolicyCreateOnly:
+		changes.Update = nil
+		changes.Replace = nil
+		changes.Delete = nil
+		changes.OrphanTXT = nil
+		return changes
+	default:
+		return changes
+	}
+}
+
 func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {
 	if err := c.upsertTXT(ctx, ep, current); err != nil {
 		return err
@@ -196,6 +228,12 @@ func (c *Controller) upsertTXT(ctx context.Context, ep *source.Endpoint, current
 	}
 	// Upsert: if an orphan TXT already exists at this key, update it instead of creating.
 	if existing := findRecord(current, txtKey, "TXT"); existing != nil {
+		if !registry.IsOwnedBy(existing.Value, c.ownerID) {
+			return fmt.Errorf("ownership TXT %s exists but is not owned by %s", txtKey, c.ownerID)
+		}
+		if c.policy == config.PolicyCreateOnly {
+			return nil
+		}
 		newTXT.ID = existing.ID
 		_, err := c.provider.UpdateRecord(ctx, newTXT)
 		return err

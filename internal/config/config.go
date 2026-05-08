@@ -5,7 +5,16 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+)
+
+type Policy string
+
+const (
+	PolicySync       Policy = "sync"
+	PolicyUpsertOnly Policy = "upsert-only"
+	PolicyCreateOnly Policy = "create-only"
 )
 
 type Config struct {
@@ -22,6 +31,7 @@ type Config struct {
 	DefaultTarget     string
 	OwnerID           string
 	TxtPrefix         string
+	Policy            Policy
 	ReconcileInterval time.Duration
 
 	// App
@@ -37,6 +47,7 @@ func Load() (*Config, error) {
 		DockerHost:              getEnvDefault("DOCKER_HOST", "unix:///var/run/docker.sock"),
 		OwnerID:                 getEnvDefault("TXT_OWNER", "docker-external-dns"),
 		TxtPrefix:               getEnvDefault("TXT_PREFIX", ""),
+		Policy:                  PolicySync,
 		LogFormat:               getEnvDefault("LOG_FORMAT", "text"),
 		DryRun:                  parseBool(getEnvDefault("DRY_RUN", "false")),
 	}
@@ -55,6 +66,12 @@ func Load() (*Config, error) {
 	if cfg.DefaultTarget == "" {
 		return nil, fmt.Errorf("DEFAULT_TARGET is required")
 	}
+
+	policy, err := parsePolicy(getEnvDefault("POLICY", string(PolicySync)))
+	if err != nil {
+		return nil, err
+	}
+	cfg.Policy = policy
 
 	interval := getEnvDefault("RECONCILE_INTERVAL", "5m")
 	d, err := time.ParseDuration(interval)
@@ -91,4 +108,14 @@ func getEnvDefault(key, def string) string {
 func parseBool(s string) bool {
 	b, _ := strconv.ParseBool(s)
 	return b
+}
+
+func parsePolicy(raw string) (Policy, error) {
+	policy := Policy(strings.ToLower(strings.TrimSpace(raw)))
+	switch policy {
+	case PolicySync, PolicyUpsertOnly, PolicyCreateOnly:
+		return policy, nil
+	default:
+		return "", fmt.Errorf("invalid POLICY %q: must be one of %q, %q, %q", raw, PolicySync, PolicyUpsertOnly, PolicyCreateOnly)
+	}
 }

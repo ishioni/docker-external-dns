@@ -55,10 +55,23 @@ docker compose up -d
 | `UNIFI_INSECURE_SKIP_VERIFY` | `true` | Skip TLS verification (self-signed certs) |
 | `TXT_OWNER` | `docker-external-dns` | Scopes TXT ownership; change if running multiple instances |
 | `TXT_PREFIX` | empty | Optional prefix for ownership TXT record names |
+| `POLICY` | `sync` | Change policy: `sync`, `upsert-only`, or `create-only` |
 | `RECONCILE_INTERVAL` | `5m` | How often to run a full reconcile |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_FORMAT` | `text` | `text` or `json` |
 | `DRY_RUN` | `false` | List current UniFi records and log planned changes without mutating UniFi |
+
+### Policy
+
+`POLICY` controls which planned changes are applied:
+
+| Policy | Creates | Updates | A/CNAME replacements | Deletes |
+| --- | --- | --- | --- | --- |
+| `sync` | yes | yes | yes | yes |
+| `upsert-only` | yes | yes | yes | no stale-record or orphan-TXT cleanup |
+| `create-only` | yes | no | no | no |
+
+`upsert-only` allows A/CNAME replacements because they are updates by intent. UniFi may require deleting the old owned record before creating the replacement record with the same hostname.
 
 ## Container labels
 

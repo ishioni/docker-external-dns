@@ -59,6 +59,7 @@ func main() {
 		"unifi_host", cfg.UnifiHost,
 		"unifi_site", cfg.UnifiSite,
 		"default_target", cfg.DefaultTarget,
+		"policy", cfg.Policy,
 		"docker_host", cfg.DockerHost,
 		"reconcile_interval", cfg.ReconcileInterval,
 		"dry_run", cfg.DryRun,
@@ -79,7 +80,7 @@ func main() {
 		cfg.DryRun,
 	)
 
-	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.TxtPrefix, cfg.ReconcileInterval)
+	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.TxtPrefix, cfg.Policy, cfg.ReconcileInterval)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
