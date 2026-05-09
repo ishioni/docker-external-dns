@@ -1,0 +1,26 @@
+---
+# docker-external-dns — manages UniFi static DNS records for Traefik containers.
+# Deploy this alongside Traefik on your Docker host.
+services:
+  docker-external-dns:
+    build: .
+    container_name: docker-external-dns
+    restart: unless-stopped
+    environment:
+      # Required
+      UNIFI_HOST: ${UNIFI_HOST}         # e.g. https://10.1.2.1
+      UNIFI_API_KEY: ${UNIFI_API_KEY}   # PAT from UniFi Network settings
+      DEFAULT_TARGET: ${DEFAULT_TARGET} # default target; IPv4 → A record, hostname → CNAME
+
+      # Optional (shown with defaults)
+      UNIFI_SITE: ${UNIFI_SITE:-default}
+      UNIFI_INSECURE_SKIP_VERIFY: ${UNIFI_INSECURE_SKIP_VERIFY:-true}
+      TXT_OWNER: ${TXT_OWNER:-docker-external-dns}
+      TXT_PREFIX: ${TXT_PREFIX:-}
+      POLICY: ${POLICY:-sync}
+      RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-5m}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      DRY_RUN: ${DRY_RUN:-false}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

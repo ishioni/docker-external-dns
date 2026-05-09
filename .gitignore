@@ -1,0 +1,10 @@
+.env
+# Trash
+.DS_Store
+Thumbs.db
+#Clankers
+.claude
+
+docker-external-dns
+!cmd/docker-external-dns/
+coverage.out
