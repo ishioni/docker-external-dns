@@ -62,6 +62,7 @@ func main() {
 		"unifi_host", cfg.UnifiHost,
 		"unifi_site", cfg.UnifiSite,
 		"default_target", cfg.DefaultTarget,
+		"default_ttl", cfg.DefaultTTL.String(),
 		"policy", cfg.Policy,
 		"docker_host", cfg.DockerHost,
 		"reconcile_interval", cfg.ReconcileInterval,
@@ -83,6 +84,7 @@ func main() {
 		cfg.UnifiSite,
 		cfg.UnifiInsecureSkipVerify,
 		cfg.DryRun,
+		int(cfg.DefaultTTL),
 	)
 
 	ctrl := controller.New(dockerAdapter{dockerSrc}, unifiClient, cfg.OwnerID, cfg.TxtPrefix, cfg.Policy, cfg.ReconcileInterval)

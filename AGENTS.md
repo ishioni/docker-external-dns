@@ -10,6 +10,7 @@ The core pipeline is implemented and covered by an automated test suite (`go tes
 Two real-world bugs were caught during manual testing and are now regression-guarded by tests:
 
 - UniFi rejects TXT records that include a `ttl` field. Fix: `internal/provider/unifi/client.go` skips TTL when `RecordType == "TXT"`. Guard: `TestCreateTXT_OmitsTTL`.
+- UniFi's automatic TTL is represented by omitting `ttl` from A/CNAME request bodies. `DEFAULT_TTL=auto` is the default; set a positive integer to force a TTL.
 - UniFi rejects TXT values containing unquoted commas. Fix: `internal/registry/txt.go` wraps the encoded value in `"..."`, strips on decode. Guard: `TestEncodeTXT_IsQuoted` + `TestDecodeTXT_StripsQuotes`.
 
 The core pipeline:
@@ -26,7 +27,7 @@ Docker daemon → label parser → plan → UniFi static-DNS
 |---|---|
 | `cmd/docker-external-dns/main.go` | Entry point, signal handling, wiring |
 | `internal/config/config.go` | Env-driven config with validation |
-| `internal/config/config_test.go` | Config validation tests, including policy and reconcile interval |
+| `internal/config/config_test.go` | Config validation tests, including policy, default TTL, and reconcile interval |
 | `internal/source/endpoint.go` | Shared `Endpoint` type |
 | `internal/source/traefik.go` | Extracts hostnames from Traefik labels |
 | `internal/source/docker.go` | Lists containers, streams Docker events |
@@ -86,7 +87,7 @@ Precedence per router: per-router override → container-level → global defaul
 UniFi endpoint: `POST /proxy/network/v2/api/site/{site}/static-dns`
 
 ```json
-{ "key": "foo.example.com", "record_type": "A", "value": "10.1.2.241", "ttl": 300, "enabled": true }
+{ "key": "foo.example.com", "record_type": "A", "value": "10.1.2.241", "enabled": true }
 ```
 
 TXT ownership value:
@@ -105,7 +106,7 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 | `internal/source` | Label → endpoint extraction: enable-flag gating, single/multi `Host()`, `\|\|` joining, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging, container/router target and record-type overrides, router skip. |
 | `internal/registry` | `TXTKey` and `ParseTXTKey` formatting/parsing, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
 | `internal/plan` | All Create/Update/Delete/Replace branches for A and CNAME plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
-| `internal/provider/unifi` | HTTP wire format: list shape, `_id`, `X-Api-Key`, `Accept`, `Content-Type`, A/CNAME include `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, typed API/network/data errors, dry-run makes no mutation calls. |
+| `internal/provider/unifi` | HTTP wire format: list shape, `_id`, `X-Api-Key`, `Accept`, `Content-Type`, A/CNAME omit `ttl` for auto or include configured numeric TTL, **TXT omits `ttl`**, PUT/DELETE URLs, typed API/network/data errors, dry-run makes no mutation calls. |
 | `internal/controller` | Reconcile → apply flow: create/update/delete record+TXT pairs, CNAME pair creation, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path, and integration tests through the real UniFi client against a strict fake UniFi API. |
 | `internal/metrics` | Prometheus handler and metrics for reconcile health, plan/change counts, source events, provider requests, provider errors, and build/config info. |
 | `internal/source` (docker) | Endpoints aggregation across multiple containers, name slash-stripping, ID fallback, list error propagation, event filter correctness, channel pass-through. |
