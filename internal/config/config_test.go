@@ -62,8 +62,56 @@ func TestLoadDefaultsPolicyAndInterval(t *testing.T) {
 	if got.ReconcileInterval != 5*time.Minute {
 		t.Fatalf("ReconcileInterval = %s, want 5m", got.ReconcileInterval)
 	}
+	if got.DefaultTTL != 0 || got.DefaultTTL.String() != "auto" {
+		t.Fatalf("DefaultTTL = %q (%d), want auto", got.DefaultTTL.String(), got.DefaultTTL)
+	}
 	if got.MetricsAddr != ":8080" {
 		t.Fatalf("MetricsAddr = %q, want :8080", got.MetricsAddr)
+	}
+}
+
+func TestLoadDefaultTTL(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want DefaultTTL
+	}{
+		{name: "auto", env: "auto", want: 0},
+		{name: "empty is auto", env: "", want: 0},
+		{name: "trim and lowercase auto", env: " AUTO ", want: 0},
+		{name: "numeric", env: "600", want: 600},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("DEFAULT_TTL", tt.env)
+
+			got, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got.DefaultTTL != tt.want {
+				t.Fatalf("DefaultTTL = %q (%d), want %d", got.DefaultTTL.String(), got.DefaultTTL, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidDefaultTTL(t *testing.T) {
+	tests := []string{"0", "-1", "soon"}
+	for _, ttl := range tests {
+		t.Run(ttl, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("DEFAULT_TTL", ttl)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want error")
+			}
+			if !strings.Contains(err.Error(), "invalid DEFAULT_TTL") {
+				t.Fatalf("Load() error = %q, want invalid DEFAULT_TTL error", err)
+			}
+		})
 	}
 }
 

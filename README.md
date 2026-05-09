@@ -56,6 +56,7 @@ docker compose up -d
 | `TXT_OWNER` | `docker-external-dns` | Scopes TXT ownership; change if running multiple instances |
 | `TXT_PREFIX` | empty | Optional prefix for ownership TXT record names |
 | `POLICY` | `sync` | Change policy: `sync`, `upsert-only`, or `create-only` |
+| `DEFAULT_TTL` | `auto` | TTL for created A/CNAME records. Use `auto` to let UniFi choose, or a positive integer. |
 | `RECONCILE_INTERVAL` | `5m` | How often to run a full reconcile |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_FORMAT` | `text` | `text` or `json` |

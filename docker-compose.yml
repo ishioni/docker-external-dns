@@ -18,6 +18,7 @@ services:
       TXT_OWNER: ${TXT_OWNER:-docker-external-dns}
       TXT_PREFIX: ${TXT_PREFIX:-}
       POLICY: ${POLICY:-sync}
+      DEFAULT_TTL: ${DEFAULT_TTL:-auto}
       RECONCILE_INTERVAL: ${RECONCILE_INTERVAL:-5m}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}

@@ -15,20 +15,19 @@ import (
 	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
 )
 
-const defaultTTL = 300
-
 // Client talks to the UniFi OS static-dns REST API.
 type Client struct {
-	http    *http.Client
-	baseURL string
-	site    string
-	apiKey  string
-	dryRun  bool
+	http       *http.Client
+	baseURL    string
+	site       string
+	apiKey     string
+	dryRun     bool
+	defaultTTL int
 }
 
 // NewClient creates an authenticated UniFi client.
 // It uses X-Api-Key header auth (UniFi Network 9.0+ PAT).
-func NewClient(host, apiKey, site string, insecureSkipVerify, dryRun bool) *Client {
+func NewClient(host, apiKey, site string, insecureSkipVerify, dryRun bool, defaultTTL int) *Client {
 	jar, _ := cookiejar.New(nil)
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify}, //nolint:gosec
@@ -39,10 +38,11 @@ func NewClient(host, apiKey, site string, insecureSkipVerify, dryRun bool) *Clie
 			Jar:       jar,
 			Timeout:   15 * time.Second,
 		},
-		baseURL: fmt.Sprintf("%s/proxy/network/v2/api/site/%s/static-dns", host, site),
-		site:    site,
-		apiKey:  apiKey,
-		dryRun:  dryRun,
+		baseURL:    fmt.Sprintf("%s/proxy/network/v2/api/site/%s/static-dns", host, site),
+		site:       site,
+		apiKey:     apiKey,
+		dryRun:     dryRun,
+		defaultTTL: defaultTTL,
 	}
 }
 
@@ -58,8 +58,8 @@ func (c *Client) ListRecords(ctx context.Context) ([]DNSRecord, error) {
 
 // CreateRecord creates a new static DNS record and returns it (with _id populated).
 func (c *Client) CreateRecord(ctx context.Context, r DNSRecord) (DNSRecord, error) {
-	if r.RecordType != "TXT" && r.TTL == 0 {
-		r.TTL = defaultTTL
+	if r.RecordType != "TXT" && r.TTL == 0 && c.defaultTTL > 0 {
+		r.TTL = c.defaultTTL
 	}
 	r.Enabled = true
 
@@ -78,8 +78,8 @@ func (c *Client) CreateRecord(ctx context.Context, r DNSRecord) (DNSRecord, erro
 
 // UpdateRecord replaces a record by ID.
 func (c *Client) UpdateRecord(ctx context.Context, r DNSRecord) (DNSRecord, error) {
-	if r.RecordType != "TXT" && r.TTL == 0 {
-		r.TTL = defaultTTL
+	if r.RecordType != "TXT" && r.TTL == 0 && c.defaultTTL > 0 {
+		r.TTL = c.defaultTTL
 	}
 	r.Enabled = true
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type Config struct {
 	OwnerID           string        `env:"TXT_OWNER" envDefault:"docker-external-dns"`
 	TxtPrefix         string        `env:"TXT_PREFIX" envDefault:""`
 	Policy            Policy        `env:"POLICY" envDefault:"sync"`
+	DefaultTTL        DefaultTTL    `env:"DEFAULT_TTL" envDefault:"auto"`
 	ReconcileInterval time.Duration `env:"RECONCILE_INTERVAL" envDefault:"5m"`
 
 	// App
@@ -42,6 +44,8 @@ type Config struct {
 	DryRun      bool       `env:"DRY_RUN" envDefault:"false"`
 	MetricsAddr string     `env:"METRICS_ADDR"`
 }
+
+type DefaultTTL int
 
 func Load() (*Config, error) {
 	var cfg Config
@@ -94,4 +98,26 @@ func (p Policy) Validate() error {
 	default:
 		return fmt.Errorf("invalid POLICY %q: must be one of %q, %q, %q", p, PolicySync, PolicyUpsertOnly, PolicyCreateOnly)
 	}
+}
+
+func (t *DefaultTTL) UnmarshalText(text []byte) error {
+	raw := strings.ToLower(strings.TrimSpace(string(text)))
+	if raw == "" || raw == "auto" {
+		*t = 0
+		return nil
+	}
+
+	ttl, err := strconv.Atoi(raw)
+	if err != nil || ttl <= 0 {
+		return fmt.Errorf("invalid DEFAULT_TTL %q: must be %q or a positive integer", string(text), "auto")
+	}
+	*t = DefaultTTL(ttl)
+	return nil
+}
+
+func (t DefaultTTL) String() string {
+	if t == 0 {
+		return "auto"
+	}
+	return strconv.Itoa(int(t))
 }

@@ -56,7 +56,7 @@ func newStrictUniFiServer(t *testing.T, initial ...DNSRecord) *strictUniFiServer
 }
 
 func (s *strictUniFiServer) client(dryRun bool) *Client {
-	return NewClient(s.server.URL, testAPIKey, testSite, false, dryRun)
+	return NewClient(s.server.URL, testAPIKey, testSite, false, dryRun, 300)
 }
 
 func (s *strictUniFiServer) failNext(method string, status int, message string) {
@@ -195,10 +195,6 @@ func (s *strictUniFiServer) validRecordBody(w http.ResponseWriter, body map[stri
 	_, hasTTL := body["ttl"]
 	switch recordType {
 	case "A", "CNAME":
-		if !hasTTL {
-			s.writeError(w, http.StatusBadRequest, "A and CNAME records require ttl")
-			return false
-		}
 	case "TXT":
 		if hasTTL {
 			s.writeError(w, http.StatusBadRequest, "TXT records must not include ttl")
@@ -297,10 +293,10 @@ func TestListRecords_APIErrorIncludesUniFiMessage(t *testing.T) {
 	}
 }
 
-func TestCreateA_IncludesTTLAndHeaders(t *testing.T) {
+func TestCreateA_DefaultTTLAutoOmitsTTLAndIncludesHeaders(t *testing.T) {
 	api := newStrictUniFiServer(t)
 
-	got, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
+	got, err := NewClient(api.server.URL, testAPIKey, testSite, false, false, 0).CreateRecord(context.Background(), DNSRecord{
 		Key:        "foo.example.com",
 		RecordType: "A",
 		Value:      "10.0.0.1",
@@ -319,15 +315,33 @@ func TestCreateA_IncludesTTLAndHeaders(t *testing.T) {
 	if req.APIKey != testAPIKey || req.Accept != "application/json" || req.ContentType != "application/json; charset=utf-8" {
 		t.Fatalf("unexpected headers: %+v", req)
 	}
-	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != defaultTTL {
-		t.Fatalf("A record ttl = %v, want %d", req.Body["ttl"], defaultTTL)
+	if _, present := req.Body["ttl"]; present {
+		t.Fatalf("A record ttl = %v, want omitted for auto", req.Body["ttl"])
 	}
 	if req.Body["_id"] != nil {
 		t.Fatalf("create body must not include _id, got %v", req.Body)
 	}
 }
 
-func TestCreateCNAME_IncludesTTL(t *testing.T) {
+func TestCreateA_NumericDefaultTTLIncludesTTL(t *testing.T) {
+	api := newStrictUniFiServer(t)
+
+	_, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
+		Key:        "foo.example.com",
+		RecordType: "A",
+		Value:      "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("CreateRecord (A): %v", err)
+	}
+
+	req := api.requests[0]
+	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != 300 {
+		t.Fatalf("A record ttl = %v, want 300", req.Body["ttl"])
+	}
+}
+
+func TestCreateCNAME_NumericDefaultTTLIncludesTTL(t *testing.T) {
 	api := newStrictUniFiServer(t)
 
 	_, err := api.client(false).CreateRecord(context.Background(), DNSRecord{
@@ -340,8 +354,8 @@ func TestCreateCNAME_IncludesTTL(t *testing.T) {
 	}
 
 	req := api.requests[0]
-	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != defaultTTL {
-		t.Fatalf("CNAME record ttl = %v, want %d", req.Body["ttl"], defaultTTL)
+	if ttl, ok := req.Body["ttl"].(float64); !ok || int(ttl) != 300 {
+		t.Fatalf("CNAME record ttl = %v, want 300", req.Body["ttl"])
 	}
 }
 
@@ -390,6 +404,27 @@ func TestUpdateRecord(t *testing.T) {
 	}
 }
 
+func TestUpdateA_DefaultTTLAutoOmitsTTL(t *testing.T) {
+	api := newStrictUniFiServer(t, DNSRecord{
+		ID: "abc", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true,
+	})
+
+	_, err := NewClient(api.server.URL, testAPIKey, testSite, false, false, 0).UpdateRecord(context.Background(), DNSRecord{
+		ID:         "abc",
+		Key:        "foo.example.com",
+		RecordType: "A",
+		Value:      "10.0.0.2",
+	})
+	if err != nil {
+		t.Fatalf("UpdateRecord: %v", err)
+	}
+
+	req := api.requests[0]
+	if _, present := req.Body["ttl"]; present {
+		t.Fatalf("A record update ttl = %v, want omitted for auto", req.Body["ttl"])
+	}
+}
+
 func TestDeleteRecord(t *testing.T) {
 	api := newStrictUniFiServer(t, DNSRecord{
 		ID: "abc", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true,
@@ -409,7 +444,7 @@ func TestDeleteRecord(t *testing.T) {
 }
 
 func TestNetworkError(t *testing.T) {
-	client := NewClient("https://unifi.example.com", testAPIKey, testSite, false, false)
+	client := NewClient("https://unifi.example.com", testAPIKey, testSite, false, false, 0)
 	client.http.Transport = failingTransport{}
 
 	_, err := client.ListRecords(context.Background())

@@ -46,7 +46,7 @@ func newControllerUniFiAPI(t *testing.T, records ...unifi.DNSRecord) *controller
 }
 
 func (api *controllerUniFiAPI) provider() *unifi.Client {
-	return unifi.NewClient(api.server.URL, "test-key", "default", false, false)
+	return unifi.NewClient(api.server.URL, "test-key", "default", false, false, 300)
 }
 
 func (api *controllerUniFiAPI) handle(w http.ResponseWriter, r *http.Request) {
