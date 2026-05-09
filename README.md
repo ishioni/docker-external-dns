@@ -61,7 +61,6 @@ docker compose up -d
 | `LOG_FORMAT` | `text` | `text` or `json` |
 | `DRY_RUN` | `false` | List current UniFi records and log planned changes without mutating UniFi |
 | `METRICS_ADDR` | `:8080` | Address for the Prometheus metrics HTTP server. Empty disables metrics. |
-| `METRICS_PORT` | `8080` | Host port used by the example Docker Compose file for `/metrics` |
 
 ### Policy
 
@@ -77,7 +76,8 @@ docker compose up -d
 
 ## Metrics
 
-Prometheus metrics are exposed at `/metrics` on `METRICS_ADDR`.
+Prometheus metrics are exposed at `/metrics` on `METRICS_ADDR`. The example
+Docker Compose file publishes the default metrics listener on host port `8080`.
 
 Useful alerting metrics:
 
