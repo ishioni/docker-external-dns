@@ -62,6 +62,22 @@ func TestLoadDefaultsPolicyAndInterval(t *testing.T) {
 	if got.ReconcileInterval != 5*time.Minute {
 		t.Fatalf("ReconcileInterval = %s, want 5m", got.ReconcileInterval)
 	}
+	if got.MetricsAddr != ":8080" {
+		t.Fatalf("MetricsAddr = %q, want :8080", got.MetricsAddr)
+	}
+}
+
+func TestLoadAllowsEmptyMetricsAddr(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("METRICS_ADDR", "")
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.MetricsAddr != "" {
+		t.Fatalf("MetricsAddr = %q, want empty", got.MetricsAddr)
+	}
 }
 
 func TestLoadRejectsNonPositiveReconcileInterval(t *testing.T) {

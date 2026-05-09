@@ -3,9 +3,9 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.8 — Change policy support (2026-05-09)
+## Status: v0.9 — Prometheus metrics (2026-05-09)
 
-The core pipeline is implemented and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, per-Traefik-router target/type/skip overrides, strict UniFi HTTP contract tests that exercise the real UniFi client against an in-process API simulator, and external-dns-style change policies.
+The core pipeline is implemented and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, per-Traefik-router target/type/skip overrides, strict UniFi HTTP contract tests that exercise the real UniFi client against an in-process API simulator, external-dns-style change policies, and Prometheus metrics on `/metrics`.
 
 Two real-world bugs were caught during manual testing and are now regression-guarded by tests:
 
@@ -40,9 +40,12 @@ Docker daemon → label parser → plan → UniFi static-DNS
 | `internal/controller/types.go` | `Source` and `Provider` interfaces + domain `Event` type |
 | `internal/controller/controller_test.go` | Reconcile tests with in-process fakes, policy coverage, and debounce test |
 | `internal/controller/unifi_integration_test.go` | End-to-end fake source → real controller → real UniFi client → fake UniFi API tests |
+| `internal/metrics/metrics.go` | Prometheus collectors and `/metrics` handler |
+| `internal/metrics/metrics_test.go` | Metrics handler smoke test |
 | `Dockerfile` | Multi-stage build → scratch final image |
 | `docker-compose.yml` | Example deployment |
 | `.env.example` | Deployment env template; keep in sync with config and README |
+| `deploy/prometheusrule.yaml` | Example Prometheus Operator alert rules |
 | `Makefile` | `make build / run / test / vet / docker-build / docker-run` |
 | `internal/source/traefik_test.go` | Table tests for label → endpoint extraction |
 | `internal/source/docker_test.go` | Endpoints aggregation, name parsing, event filters |
@@ -56,6 +59,7 @@ Docker daemon → label parser → plan → UniFi static-DNS
 - **Opt-in labels**: Only `external-dns.enabled=true` is required. Hostname extraction still reads Traefik router rules, but `traefik.enable=true` is no longer a gate.
 - **TXT prefix**: Optional global `TXT_PREFIX` env var (default `""`). The full TXT key is `{TXT_PREFIX}{record_type_lowercase}-{hostname}`, e.g. with `TXT_PREFIX=talos.` the companion TXT for `postgres.example.com` lives at `talos.a-postgres.example.com`. An empty prefix gives the legacy `a-foo.example.com` format, which is wire-compatible with kubernetes-sigs/external-dns using `--txt-prefix=%{record_type}-`. The `TXT_OWNER` env var (default `docker-external-dns`) identifies which records this agent owns.
 - **Policy**: `POLICY` defaults to `sync`. `sync` applies creates, updates, replacements, stale deletes, and orphan TXT cleanup. `upsert-only` applies creates, updates, and owned A/CNAME replacements, but skips stale deletes and orphan TXT cleanup. `create-only` applies only creates.
+- **Metrics**: `METRICS_ADDR` defaults to `:8080` and exposes Prometheus metrics at `/metrics`. Set it to an empty string to disable the metrics HTTP server.
 - **Ownership safety**: Records without matching owner TXT are never deleted.
 - **Debounce**: Docker events are debounced 2s before triggering a reconcile to coalesce rapid restarts.
 
@@ -103,6 +107,7 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 | `internal/plan` | All Create/Update/Delete/Replace branches for A and CNAME plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
 | `internal/provider/unifi` | HTTP wire format: list shape, `_id`, `X-Api-Key`, `Accept`, `Content-Type`, A/CNAME include `ttl`, **TXT omits `ttl`**, PUT/DELETE URLs, typed API/network/data errors, dry-run makes no mutation calls. |
 | `internal/controller` | Reconcile → apply flow: create/update/delete record+TXT pairs, CNAME pair creation, all three ownership safety rules, error-continues behaviour, debounce → reconcile event path, and integration tests through the real UniFi client against a strict fake UniFi API. |
+| `internal/metrics` | Prometheus handler and metrics for reconcile health, plan/change counts, source events, provider requests, provider errors, and build/config info. |
 | `internal/source` (docker) | Endpoints aggregation across multiple containers, name slash-stripping, ID fallback, list error propagation, event filter correctness, channel pass-through. |
 
 ## Known gaps / future work
@@ -111,12 +116,13 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 - [ ] **Standalone non-Traefik hosts**: add explicit labels such as
       `external-dns.hosts.<name>.*` for endpoints that do not have Traefik
       router rules.
-- [ ] **Prometheus metrics**: `records_created_total`, `records_deleted_total`,
-      `reconcile_errors_total`, `reconcile_duration_seconds`.
+- [x] **Prometheus metrics**: `/metrics` exports reconcile totals/duration/last success, reconcile errors, plan gauges, change counters, source errors/events, provider request metrics, provider errors, and build info.
 
 ## Dependency notes
 
 - `github.com/docker/docker` — Docker SDK for Go; used for container listing and event streaming.
+- `github.com/caarlos0/env/v11` — Declarative environment variable parsing for config.
+- `github.com/prometheus/client_golang` — Prometheus collectors and HTTP handler.
 - No external HTTP client lib — uses stdlib `net/http`.
 - No external logging lib — uses stdlib `log/slog` (Go 1.21+).
 - Go 1.26+ required.

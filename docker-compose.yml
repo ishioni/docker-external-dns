@@ -22,5 +22,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-text}
       DRY_RUN: ${DRY_RUN:-false}
+      METRICS_ADDR: ${METRICS_ADDR:-:8080}
+    ports:
+      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

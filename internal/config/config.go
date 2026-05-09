@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/caarlos0/env/v11"
 )
 
 type Policy string
@@ -19,71 +20,47 @@ const (
 
 type Config struct {
 	// UniFi
-	UnifiHost               string
-	UnifiAPIKey             string
-	UnifiSite               string
-	UnifiInsecureSkipVerify bool
+	UnifiHost               string `env:"UNIFI_HOST,required"`
+	UnifiAPIKey             string `env:"UNIFI_API_KEY,required"`
+	UnifiSite               string `env:"UNIFI_SITE" envDefault:"default"`
+	UnifiInsecureSkipVerify bool   `env:"UNIFI_INSECURE_SKIP_VERIFY" envDefault:"true"`
 
 	// Docker
-	DockerHost string
+	DockerHost string `env:"DOCKER_HOST" envDefault:"unix:///var/run/docker.sock"`
 
 	// DNS
-	DefaultTarget     string
-	OwnerID           string
-	TxtPrefix         string
-	Policy            Policy
-	ReconcileInterval time.Duration
+	DefaultTarget     string        `env:"DEFAULT_TARGET,required"`
+	OwnerID           string        `env:"TXT_OWNER" envDefault:"docker-external-dns"`
+	TxtPrefix         string        `env:"TXT_PREFIX" envDefault:""`
+	Policy            Policy        `env:"POLICY" envDefault:"sync"`
+	ReconcileInterval time.Duration `env:"RECONCILE_INTERVAL" envDefault:"5m"`
 
 	// App
-	LogLevel  slog.Level
-	LogFormat string // "text" or "json"
-	DryRun    bool
+	LogLevel    slog.Level `env:"-"`
+	LogLevelRaw string     `env:"LOG_LEVEL" envDefault:"info"`
+	LogFormat   string     `env:"LOG_FORMAT" envDefault:"text"` // "text" or "json"
+	DryRun      bool       `env:"DRY_RUN" envDefault:"false"`
+	MetricsAddr string     `env:"METRICS_ADDR"`
 }
 
 func Load() (*Config, error) {
-	cfg := &Config{
-		UnifiSite:               getEnvDefault("UNIFI_SITE", "default"),
-		UnifiInsecureSkipVerify: parseBool(getEnvDefault("UNIFI_INSECURE_SKIP_VERIFY", "true")),
-		DockerHost:              getEnvDefault("DOCKER_HOST", "unix:///var/run/docker.sock"),
-		OwnerID:                 getEnvDefault("TXT_OWNER", "docker-external-dns"),
-		TxtPrefix:               getEnvDefault("TXT_PREFIX", ""),
-		Policy:                  PolicySync,
-		LogFormat:               getEnvDefault("LOG_FORMAT", "text"),
-		DryRun:                  parseBool(getEnvDefault("DRY_RUN", "false")),
-	}
-
-	cfg.UnifiHost = os.Getenv("UNIFI_HOST")
-	if cfg.UnifiHost == "" {
-		return nil, fmt.Errorf("UNIFI_HOST is required")
-	}
-
-	cfg.UnifiAPIKey = os.Getenv("UNIFI_API_KEY")
-	if cfg.UnifiAPIKey == "" {
-		return nil, fmt.Errorf("UNIFI_API_KEY is required")
-	}
-
-	cfg.DefaultTarget = os.Getenv("DEFAULT_TARGET")
-	if cfg.DefaultTarget == "" {
-		return nil, fmt.Errorf("DEFAULT_TARGET is required")
-	}
-
-	policy, err := parsePolicy(getEnvDefault("POLICY", string(PolicySync)))
-	if err != nil {
+	var cfg Config
+	if err := env.Parse(&cfg); err != nil {
 		return nil, err
 	}
-	cfg.Policy = policy
 
-	interval := getEnvDefault("RECONCILE_INTERVAL", "5m")
-	d, err := time.ParseDuration(interval)
-	if err != nil {
-		return nil, fmt.Errorf("invalid RECONCILE_INTERVAL %q: %w", interval, err)
+	if err := cfg.Policy.Validate(); err != nil {
+		return nil, err
 	}
-	if d <= 0 {
-		return nil, fmt.Errorf("RECONCILE_INTERVAL must be positive, got %q", interval)
+	if _, ok := os.LookupEnv("METRICS_ADDR"); !ok {
+		cfg.MetricsAddr = ":8080"
 	}
-	cfg.ReconcileInterval = d
 
-	level := getEnvDefault("LOG_LEVEL", "info")
+	if cfg.ReconcileInterval <= 0 {
+		return nil, fmt.Errorf("RECONCILE_INTERVAL must be positive, got %q", cfg.ReconcileInterval)
+	}
+
+	level := strings.ToLower(strings.TrimSpace(cfg.LogLevelRaw))
 	switch level {
 	case "debug":
 		cfg.LogLevel = slog.LevelDebug
@@ -92,30 +69,29 @@ func Load() (*Config, error) {
 	case "error":
 		cfg.LogLevel = slog.LevelError
 	default:
+		if level != "info" {
+			return nil, fmt.Errorf("invalid LOG_LEVEL %q: must be one of %q, %q, %q, %q", level, "debug", "info", "warn", "error")
+		}
 		cfg.LogLevel = slog.LevelInfo
 	}
 
-	return cfg, nil
+	return &cfg, nil
 }
 
-func getEnvDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func (p *Policy) UnmarshalText(text []byte) error {
+	policy := Policy(strings.ToLower(strings.TrimSpace(string(text))))
+	if err := policy.Validate(); err != nil {
+		return err
 	}
-	return def
+	*p = policy
+	return nil
 }
 
-func parseBool(s string) bool {
-	b, _ := strconv.ParseBool(s)
-	return b
-}
-
-func parsePolicy(raw string) (Policy, error) {
-	policy := Policy(strings.ToLower(strings.TrimSpace(raw)))
-	switch policy {
+func (p Policy) Validate() error {
+	switch p {
 	case PolicySync, PolicyUpsertOnly, PolicyCreateOnly:
-		return policy, nil
+		return nil
 	default:
-		return "", fmt.Errorf("invalid POLICY %q: must be one of %q, %q, %q", raw, PolicySync, PolicyUpsertOnly, PolicyCreateOnly)
+		return fmt.Errorf("invalid POLICY %q: must be one of %q, %q, %q", p, PolicySync, PolicyUpsertOnly, PolicyCreateOnly)
 	}
 }

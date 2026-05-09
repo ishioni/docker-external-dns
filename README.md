@@ -60,6 +60,7 @@ docker compose up -d
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `LOG_FORMAT` | `text` | `text` or `json` |
 | `DRY_RUN` | `false` | List current UniFi records and log planned changes without mutating UniFi |
+| `METRICS_ADDR` | `:8080` | Address for the Prometheus metrics HTTP server. Empty disables metrics. |
 
 ### Policy
 
@@ -72,6 +73,36 @@ docker compose up -d
 | `create-only` | yes | no | no | no |
 
 `upsert-only` allows A/CNAME replacements because they are updates by intent. UniFi may require deleting the old owned record before creating the replacement record with the same hostname.
+
+## Metrics
+
+Prometheus metrics are exposed at `/metrics` on `METRICS_ADDR`. The example
+Docker Compose file publishes the default metrics listener on host port `8080`.
+
+Useful alerting metrics:
+
+```promql
+time() - docker_external_dns_reconcile_last_success_timestamp_seconds > 900
+increase(docker_external_dns_reconcile_total{result="error"}[10m]) > 0
+increase(docker_external_dns_changes_total{result="error"}[10m]) > 0
+increase(docker_external_dns_provider_errors_total[10m]) > 0
+```
+
+An example Prometheus Operator rule file is available at `deploy/prometheusrule.yaml`.
+
+Useful dashboard metrics:
+
+- `docker_external_dns_reconcile_total`
+- `docker_external_dns_reconcile_duration_seconds`
+- `docker_external_dns_reconcile_last_success_timestamp_seconds`
+- `docker_external_dns_plan_desired_records`
+- `docker_external_dns_plan_current_records`
+- `docker_external_dns_plan_changes`
+- `docker_external_dns_changes_total`
+- `docker_external_dns_provider_requests_total`
+- `docker_external_dns_provider_request_duration_seconds`
+- `docker_external_dns_provider_errors_total`
+- `docker_external_dns_docker_events_total`
 
 ## Container labels
 
