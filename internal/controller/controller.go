@@ -6,12 +6,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ishioni/docker-external-dns/internal/config"
-	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
-	"github.com/ishioni/docker-external-dns/internal/plan"
-	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
-	"github.com/ishioni/docker-external-dns/internal/registry"
-	"github.com/ishioni/docker-external-dns/internal/source"
+	"github.com/ishioni/dexd/internal/config"
+	appmetrics "github.com/ishioni/dexd/internal/metrics"
+	"github.com/ishioni/dexd/internal/plan"
+	"github.com/ishioni/dexd/internal/provider/unifi"
+	"github.com/ishioni/dexd/internal/registry"
+	"github.com/ishioni/dexd/internal/source"
 )
 
 // Controller orchestrates the reconcile loop.

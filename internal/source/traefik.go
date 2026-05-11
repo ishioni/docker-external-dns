@@ -10,11 +10,16 @@ import (
 )
 
 const (
-	labelExternalDNSEnable       = "external-dns.enabled"
-	labelExternalDNSTarget       = "external-dns.target"
-	labelExternalDNSRouterPrefix = "external-dns.routers."
-	labelRouterRulePrefix        = "traefik.http.routers."
-	labelRouterRuleSuffix        = ".rule"
+	labelDexdEnable       = "dexd.enabled"
+	labelDexdTarget       = "dexd.target"
+	labelDexdRouterPrefix = "dexd.routers."
+
+	labelLegacyExternalDNSEnable       = "external-dns.enabled"
+	labelLegacyExternalDNSTarget       = "external-dns.target"
+	labelLegacyExternalDNSRouterPrefix = "external-dns.routers."
+
+	labelRouterRulePrefix = "traefik.http.routers."
+	labelRouterRuleSuffix = ".rule"
 )
 
 // hostExtract matches Host(`foo.example.com`) entries in a Traefik rule string.
@@ -31,16 +36,18 @@ func detectRecordType(target string) string {
 // EndpointsFromLabels parses a container's labels and returns the desired DNS
 // endpoints. Returns nil if the container is not in scope.
 func EndpointsFromLabels(containerName string, labels map[string]string, defaultTarget, ownerID string) []*Endpoint {
-	if !isTrue(labels[labelExternalDNSEnable]) {
+	if !enabled(labels) {
 		return nil
 	}
 
 	type routerOverride struct {
-		target string
-		skip   bool
+		target    string
+		targetSet bool
+		skip      bool
+		skipSet   bool
 	}
 
-	containerTarget := labels[labelExternalDNSTarget]
+	containerTarget := firstLabelValue(labels, labelDexdTarget, labelLegacyExternalDNSTarget)
 	routerRules := make(map[string]string)
 	routerOverrides := make(map[string]routerOverride)
 
@@ -51,16 +58,25 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 			continue
 		}
 
-		routerName, field, ok := parseRouterLabel(key)
+		routerName, field, legacy, ok := parseRouterLabel(key)
 		if !ok {
 			continue
 		}
+		if legacy {
+			existing := routerOverrides[routerName]
+			if (field == "target" && existing.targetSet) || (field == "skip" && existing.skipSet) {
+				continue
+			}
+		}
+
 		ro := routerOverrides[routerName]
 		switch field {
 		case "target":
 			ro.target = val
+			ro.targetSet = true
 		case "skip":
 			ro.skip = isTrue(val)
+			ro.skipSet = true
 		}
 		routerOverrides[routerName] = ro
 	}
@@ -114,24 +130,44 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 	return endpoints
 }
 
-func parseRouterLabel(key string) (name, field string, ok bool) {
-	rest, ok := strings.CutPrefix(key, labelExternalDNSRouterPrefix)
+func enabled(labels map[string]string) bool {
+	if val, ok := labels[labelDexdEnable]; ok {
+		return isTrue(val)
+	}
+	return isTrue(labels[labelLegacyExternalDNSEnable])
+}
+
+func firstLabelValue(labels map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if val := labels[key]; val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func parseRouterLabel(key string) (name, field string, legacy, ok bool) {
+	rest, ok := strings.CutPrefix(key, labelDexdRouterPrefix)
 	if !ok {
-		return "", "", false
+		rest, ok = strings.CutPrefix(key, labelLegacyExternalDNSRouterPrefix)
+		legacy = ok
+	}
+	if !ok {
+		return "", "", false, false
 	}
 	idx := strings.LastIndex(rest, ".")
 	if idx < 0 {
-		return "", "", false
+		return "", "", false, false
 	}
 	name, field = rest[:idx], rest[idx+1:]
 	if name == "" || field == "" {
-		return "", "", false
+		return "", "", false, false
 	}
 	switch field {
 	case "target", "skip":
-		return name, field, true
+		return name, field, legacy, true
 	default:
-		return "", "", false
+		return "", "", false, false
 	}
 }
 

@@ -1,5 +1,5 @@
 FROM golang:1.26-alpine AS builder
-ARG PKG=github.com/ishioni/docker-external-dns
+ARG PKG=github.com/ishioni/dexd
 ARG VERSION=dev
 ARG REVISION=dev
 
@@ -10,11 +10,11 @@ WORKDIR /src
 
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION} -X main.Gitsha=${REVISION}" \
-    ./cmd/docker-external-dns && upx --best --lzma docker-external-dns
+    ./cmd/dexd && upx --best --lzma dexd
 
 FROM scratch
 COPY --from=builder /tmp/passwd /etc/passwd
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder --chmod=555 /src/docker-external-dns /docker-external-dns
+COPY --from=builder --chmod=555 /src/dexd /dexd
 
-ENTRYPOINT ["/docker-external-dns"]
+ENTRYPOINT ["/dexd"]

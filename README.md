@@ -1,7 +1,9 @@
-# docker-external-dns
+# dexd
 
-`docker-external-dns` is a lightweight Go agent that watches your Docker daemon
-and automatically creates/removes static DNS records on a **UniFi OS local
+External DNS, but for Docker!
+
+`dexd` is a lightweight Go agent that watches your Docker daemon and
+automatically creates/removes static DNS records on a **UniFi OS local
 controller** (UDM/UDR/UDM-Pro) for services exposed via Traefik.
 
 It mirrors the ownership-tracking model of
@@ -11,7 +13,7 @@ the same UniFi controller.
 
 ## How it works
 
-1. Scans running containers opted in with `external-dns.enabled=true`.
+1. Scans running containers opted in with `dexd.enabled=true`.
 2. Extracts hostnames from `traefik.http.routers.<name>.rule: Host(\`...\`)` labels.
 3. Creates an **A** or **CNAME** record and a companion **TXT ownership record**
    on UniFi for each hostname.
@@ -83,35 +85,35 @@ Docker Compose file publishes the default metrics listener on host port `8080`.
 Useful alerting metrics:
 
 ```promql
-time() - docker_external_dns_reconcile_last_success_timestamp_seconds > 900
-increase(docker_external_dns_reconcile_total{result="error"}[10m]) > 0
-increase(docker_external_dns_changes_total{result="error"}[10m]) > 0
-increase(docker_external_dns_provider_errors_total[10m]) > 0
+time() - dexd_reconcile_last_success_timestamp_seconds > 900
+increase(dexd_reconcile_total{result="error"}[10m]) > 0
+increase(dexd_changes_total{result="error"}[10m]) > 0
+increase(dexd_provider_errors_total[10m]) > 0
 ```
 
 An example Prometheus Operator rule file is available at `deploy/prometheusrule.yaml`.
 
 Useful dashboard metrics:
 
-- `docker_external_dns_reconcile_total`
-- `docker_external_dns_reconcile_duration_seconds`
-- `docker_external_dns_reconcile_last_success_timestamp_seconds`
-- `docker_external_dns_plan_desired_records`
-- `docker_external_dns_plan_current_records`
-- `docker_external_dns_plan_changes`
-- `docker_external_dns_changes_total`
-- `docker_external_dns_provider_requests_total`
-- `docker_external_dns_provider_request_duration_seconds`
-- `docker_external_dns_provider_errors_total`
-- `docker_external_dns_docker_events_total`
+- `dexd_reconcile_total`
+- `dexd_reconcile_duration_seconds`
+- `dexd_reconcile_last_success_timestamp_seconds`
+- `dexd_plan_desired_records`
+- `dexd_plan_current_records`
+- `dexd_plan_changes`
+- `dexd_changes_total`
+- `dexd_provider_requests_total`
+- `dexd_provider_request_duration_seconds`
+- `dexd_provider_errors_total`
+- `dexd_docker_events_total`
 
 ## Container labels
 
-Add `external-dns.enabled=true` to any service you want managed:
+Add `dexd.enabled=true` to any service you want managed:
 
 ```yaml
 labels:
-  external-dns.enabled: "true"
+  dexd.enabled: "true"
   traefik.http.routers.myapp.rule: Host(`myapp.example.com`)
   # ... other traefik labels
 ```
@@ -132,21 +134,31 @@ A container-level target override applies to every router from that container:
 
 ```yaml
 labels:
-  external-dns.enabled: "true"
-  external-dns.target: "traefik.example.com"   # hostname → CNAME for all routers
+  dexd.enabled: "true"
+  dexd.target: "traefik.example.com"   # hostname → CNAME for all routers
 ```
 
 Per-router target overrides take precedence, and each router's type is detected independently:
 
 ```yaml
 labels:
-  external-dns.enabled: "true"
+  dexd.enabled: "true"
   traefik.http.routers.s3.rule: Host(`bucket.example.com`)
   traefik.http.routers.console.rule: Host(`console.example.com`)
-  external-dns.routers.console.target: "traefik.example.com"
+  dexd.routers.console.target: "traefik.example.com"
   # bucket.example.com → A (uses DEFAULT_TARGET, an IP)
   # console.example.com → CNAME (hostname override)
 ```
+
+### Rename compatibility
+
+`dexd` still accepts the old `external-dns.*` Docker labels as compatibility
+aliases. Prefer `dexd.*` for new deployments; if both are present, `dexd.*`
+wins.
+
+The default `TXT_OWNER` remains `docker-external-dns` so existing records
+created before the rename are still recognized. Change it only if you are
+starting from a clean zone or intentionally want a separate ownership scope.
 
 ## Getting a UniFi PAT
 
@@ -157,11 +169,11 @@ support.
 ## Building
 
 ```bash
-go build ./cmd/docker-external-dns
+go build ./cmd/dexd
 ```
 
 or with Docker:
 
 ```bash
-docker build -t docker-external-dns .
+docker build -t dexd .
 ```

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ishioni/docker-external-dns/internal/config"
+	"github.com/ishioni/dexd/internal/config"
 )
 
 func TestHandlerExportsMetrics(t *testing.T) {
@@ -21,10 +21,10 @@ func TestHandlerExportsMetrics(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "docker_external_dns_build_info") {
+	if !strings.Contains(body, "dexd_build_info") {
 		t.Fatalf("metrics body missing build_info: %s", body)
 	}
-	if !strings.Contains(body, "docker_external_dns_docker_events_total") {
+	if !strings.Contains(body, "dexd_docker_events_total") {
 		t.Fatalf("metrics body missing docker_events_total: %s", body)
 	}
 }

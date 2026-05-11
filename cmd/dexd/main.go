@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ishioni/docker-external-dns/internal/config"
-	"github.com/ishioni/docker-external-dns/internal/controller"
-	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
-	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
-	"github.com/ishioni/docker-external-dns/internal/source"
+	"github.com/ishioni/dexd/internal/config"
+	"github.com/ishioni/dexd/internal/controller"
+	appmetrics "github.com/ishioni/dexd/internal/metrics"
+	"github.com/ishioni/dexd/internal/provider/unifi"
+	"github.com/ishioni/dexd/internal/source"
 )
 
 // Build-time metadata populated by -ldflags "-X main.Version=… -X main.Gitsha=…".
@@ -54,7 +54,7 @@ func main() {
 
 	setupLogging(cfg)
 
-	slog.Info("docker-external-dns starting",
+	slog.Info("dexd starting",
 		"version", Version,
 		"gitsha", Gitsha,
 		"owner_id", cfg.OwnerID,
