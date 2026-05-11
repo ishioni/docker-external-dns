@@ -380,6 +380,33 @@ func TestCreateTXT_OmitsTTL(t *testing.T) {
 	}
 }
 
+func TestValidateRecordRejectsWildcardCNAME(t *testing.T) {
+	client := NewClient("https://unifi.example.com", testAPIKey, testSite, false, false, 0)
+
+	err := client.ValidateRecord(DNSRecord{
+		Key:        "*.example.com",
+		RecordType: "CNAME",
+		Value:      "target.example.com",
+	})
+	var unsupported *UnsupportedRecordError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("ValidateRecord error = %T %v, want *UnsupportedRecordError", err, err)
+	}
+}
+
+func TestValidateRecordAllowsWildcardA(t *testing.T) {
+	client := NewClient("https://unifi.example.com", testAPIKey, testSite, false, false, 0)
+
+	err := client.ValidateRecord(DNSRecord{
+		Key:        "*.example.com",
+		RecordType: "A",
+		Value:      "10.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("ValidateRecord error = %v, want nil", err)
+	}
+}
+
 func TestUpdateRecord(t *testing.T) {
 	api := newStrictUniFiServer(t, DNSRecord{
 		ID: "abc", Key: "foo.example.com", RecordType: "A", Value: "10.0.0.1", TTL: 300, Enabled: true,

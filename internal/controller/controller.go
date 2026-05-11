@@ -144,10 +144,16 @@ func (c *Controller) reconcile(ctx context.Context) {
 		"planned_orphan_txt", len(planned.OrphanTXT),
 	)
 
-	created, updated, deleted, orphanCleaned, failed := 0, 0, 0, 0, 0
+	created, updated, deleted, orphanCleaned, skippedUnsupported, failed := 0, 0, 0, 0, 0, 0
 
 	// Replace owned records whose type changed, e.g. A -> CNAME.
 	for _, replacement := range changes.Replace {
+		if err := c.validateEndpoint(replacement.Desired); err != nil {
+			log.Warn("unsupported DNS record skipped", "operation", "replace", "hostname", replacement.Desired.DNSName, "record_type", replacement.Desired.RecordType, "target", replacement.Desired.Target, "err", err)
+			appmetrics.IncProviderError("unsupported")
+			skippedUnsupported++
+			continue
+		}
 		if err := c.replacePair(ctx, replacement.Old, replacement.Desired, current); err != nil {
 			log.Error("replace failed", "hostname", replacement.Desired.DNSName, "from_type", replacement.Old.RecordType, "to_type", replacement.Desired.RecordType, "err", err)
 			appmetrics.ObserveChange("replace", replacement.Desired.RecordType, false)
@@ -162,6 +168,12 @@ func (c *Controller) reconcile(ctx context.Context) {
 
 	// Create new A/CNAME + TXT pairs.
 	for _, ep := range changes.Create {
+		if err := c.validateEndpoint(ep); err != nil {
+			log.Warn("unsupported DNS record skipped", "operation", "create", "hostname", ep.DNSName, "record_type", ep.RecordType, "target", ep.Target, "err", err)
+			appmetrics.IncProviderError("unsupported")
+			skippedUnsupported++
+			continue
+		}
 		if err := c.createPair(ctx, ep, current); err != nil {
 			log.Error("create failed", "hostname", ep.DNSName, "err", err)
 			appmetrics.ObserveChange("create", ep.RecordType, false)
@@ -175,6 +187,12 @@ func (c *Controller) reconcile(ctx context.Context) {
 
 	// Update changed A/CNAME records (and refresh TXT).
 	for _, ep := range changes.Update {
+		if err := c.validateEndpoint(ep); err != nil {
+			log.Warn("unsupported DNS record skipped", "operation", "update", "hostname", ep.DNSName, "record_type", ep.RecordType, "target", ep.Target, "err", err)
+			appmetrics.IncProviderError("unsupported")
+			skippedUnsupported++
+			continue
+		}
 		if err := c.updatePair(ctx, ep, current); err != nil {
 			log.Error("update failed", "hostname", ep.DNSName, "err", err)
 			appmetrics.ObserveChange("update", ep.RecordType, false)
@@ -219,6 +237,7 @@ func (c *Controller) reconcile(ctx context.Context) {
 		"updated", updated,
 		"deleted", deleted,
 		"orphan_txt_deleted", orphanCleaned,
+		"skipped_unsupported", skippedUnsupported,
 		"failed", failed,
 	)
 }
@@ -253,6 +272,18 @@ func (c *Controller) createPair(ctx context.Context, ep *source.Endpoint, curren
 		Value:      ep.Target,
 	})
 	return err
+}
+
+func (c *Controller) validateEndpoint(ep *source.Endpoint) error {
+	validator, ok := c.provider.(RecordValidator)
+	if !ok {
+		return nil
+	}
+	return validator.ValidateRecord(unifi.DNSRecord{
+		Key:        ep.DNSName,
+		RecordType: ep.RecordType,
+		Value:      ep.Target,
+	})
 }
 
 func (c *Controller) upsertTXT(ctx context.Context, ep *source.Endpoint, current []unifi.DNSRecord) error {

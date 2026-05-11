@@ -28,3 +28,10 @@ type Provider interface {
 	UpdateRecord(ctx context.Context, r unifi.DNSRecord) (unifi.DNSRecord, error)
 	DeleteRecord(ctx context.Context, id, key, recordType string) error
 }
+
+// RecordValidator is an optional provider capability hook. Providers can use it
+// to reject records that their backend cannot represent without failing the
+// whole reconcile.
+type RecordValidator interface {
+	ValidateRecord(r unifi.DNSRecord) error
+}
