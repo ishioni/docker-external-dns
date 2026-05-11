@@ -9,6 +9,7 @@ type endpointWant struct {
 	DNSName    string
 	Target     string
 	RecordType string
+	Resource   string
 }
 
 func TestEndpointsFromLabels(t *testing.T) {
@@ -234,6 +235,76 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: []endpointWant{{DNSName: "foo.example.com", Target: defaultTarget, RecordType: "A"}},
 		},
 		{
+			name:      "router extra hostnames append to parsed hosts",
+			container: "rustfs",
+			labels: map[string]string{
+				"dexd.enabled":                        "true",
+				"dexd.routers.rustfs.extra-hostnames": "*.rs.example.com",
+				"traefik.http.routers.rustfs.rule":    "Host(`rs.example.com`) || HostRegexp(`^.+\\.rs\\.example\\.com$`)",
+			},
+			want: []endpointWant{
+				{DNSName: "*.rs.example.com", Target: defaultTarget, RecordType: "A"},
+				{DNSName: "rs.example.com", Target: defaultTarget, RecordType: "A"},
+			},
+		},
+		{
+			name:      "router hostnames override parsed hosts",
+			container: "rustfs",
+			labels: map[string]string{
+				"dexd.enabled":                     "true",
+				"dexd.routers.rustfs.hostnames":    "wanted.example.com,*.wanted.example.com",
+				"traefik.http.routers.rustfs.rule": "Host(`ignored.example.com`)",
+			},
+			want: []endpointWant{
+				{DNSName: "*.wanted.example.com", Target: defaultTarget, RecordType: "A"},
+				{DNSName: "wanted.example.com", Target: defaultTarget, RecordType: "A"},
+			},
+		},
+		{
+			name:      "router skip ignores overridden hostnames",
+			container: "rustfs",
+			labels: map[string]string{
+				"dexd.enabled":                     "true",
+				"dexd.routers.rustfs.hostnames":    "wanted.example.com,*.wanted.example.com",
+				"dexd.routers.rustfs.skip":         "true",
+				"traefik.http.routers.rustfs.rule": "Host(`ignored.example.com`)",
+			},
+			want: nil,
+		},
+		{
+			name:      "standalone host block uses default target",
+			container: "traefik",
+			labels: map[string]string{
+				"dexd.enabled":                   "true",
+				"dexd.hosts.dashboard.hostnames": "traefik.example.com",
+			},
+			want: []endpointWant{{DNSName: "traefik.example.com", Target: defaultTarget, RecordType: "A", Resource: "docker/traefik/hosts/dashboard"}},
+		},
+		{
+			name:      "standalone host block target overrides container and default",
+			container: "traefik",
+			labels: map[string]string{
+				"dexd.enabled":                   "true",
+				"dexd.target":                    "10.9.8.7",
+				"dexd.hosts.dashboard.hostnames": "traefik.example.com,*.traefik.example.com",
+				"dexd.hosts.dashboard.target":    "traefik.internal.example.com",
+			},
+			want: []endpointWant{
+				{DNSName: "*.traefik.example.com", Target: "traefik.internal.example.com", RecordType: "CNAME", Resource: "docker/traefik/hosts/dashboard"},
+				{DNSName: "traefik.example.com", Target: "traefik.internal.example.com", RecordType: "CNAME", Resource: "docker/traefik/hosts/dashboard"},
+			},
+		},
+		{
+			name:      "standalone host block skip wins",
+			container: "traefik",
+			labels: map[string]string{
+				"dexd.enabled":                   "true",
+				"dexd.hosts.dashboard.hostnames": "traefik.example.com,*.traefik.example.com",
+				"dexd.hosts.dashboard.skip":      "true",
+			},
+			want: nil,
+		},
+		{
 			name:      "rustfs style mixed routers: IP default + hostname override",
 			container: "rustfs",
 			labels: map[string]string{
@@ -255,13 +326,14 @@ func TestEndpointsFromLabels(t *testing.T) {
 
 			gotEndpoints := make([]endpointWant, len(got))
 			for i, ep := range got {
-				gotEndpoints[i] = endpointWant{DNSName: ep.DNSName, Target: ep.Target, RecordType: ep.RecordType}
+				gotEndpoints[i] = endpointWant{DNSName: ep.DNSName, Target: ep.Target, RecordType: ep.RecordType, Resource: ep.Resource}
 				if ep.OwnerID != ownerID {
 					t.Errorf("endpoint %s: OwnerID = %q, want %q", ep.DNSName, ep.OwnerID, ownerID)
 				}
-				wantResource := "docker/" + tt.container
-				if ep.Resource != wantResource {
-					t.Errorf("endpoint %s: Resource = %q, want %q", ep.DNSName, ep.Resource, wantResource)
+			}
+			for i := range tt.want {
+				if tt.want[i].Resource == "" {
+					tt.want[i].Resource = "docker/" + tt.container
 				}
 			}
 			sortEndpoints(gotEndpoints)

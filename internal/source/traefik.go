@@ -13,6 +13,7 @@ const (
 	labelDexdEnable       = "dexd.enabled"
 	labelDexdTarget       = "dexd.target"
 	labelDexdRouterPrefix = "dexd.routers."
+	labelDexdHostsPrefix  = "dexd.hosts."
 
 	labelLegacyExternalDNSEnable       = "external-dns.enabled"
 	labelLegacyExternalDNSTarget       = "external-dns.target"
@@ -41,15 +42,27 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 	}
 
 	type routerOverride struct {
-		target    string
-		targetSet bool
-		skip      bool
-		skipSet   bool
+		target         string
+		targetSet      bool
+		hostnames      []string
+		hostnamesSet   bool
+		extraHostnames []string
+		skip           bool
+		skipSet        bool
+	}
+	type hostBlock struct {
+		hostnames    []string
+		hostnamesSet bool
+		target       string
+		targetSet    bool
+		skip         bool
+		skipSet      bool
 	}
 
 	containerTarget := firstLabelValue(labels, labelDexdTarget, labelLegacyExternalDNSTarget)
 	routerRules := make(map[string]string)
 	routerOverrides := make(map[string]routerOverride)
+	hostBlocks := make(map[string]hostBlock)
 
 	for key, val := range labels {
 		if strings.HasPrefix(key, labelRouterRulePrefix) && strings.HasSuffix(key, labelRouterRuleSuffix) {
@@ -58,37 +71,104 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 			continue
 		}
 
-		routerName, field, legacy, ok := parseRouterLabel(key)
+		if routerName, field, legacy, ok := parseRouterLabel(key); ok {
+			if legacy {
+				existing := routerOverrides[routerName]
+				if (field == "target" && existing.targetSet) ||
+					(field == "skip" && existing.skipSet) ||
+					field == "hostnames" ||
+					field == "extra-hostnames" {
+					continue
+				}
+			}
+
+			ro := routerOverrides[routerName]
+			switch field {
+			case "target":
+				ro.target = val
+				ro.targetSet = true
+			case "hostnames":
+				ro.hostnames = parseHostnameList(val)
+				ro.hostnamesSet = true
+			case "extra-hostnames":
+				ro.extraHostnames = parseHostnameList(val)
+			case "skip":
+				ro.skip = isTrue(val)
+				ro.skipSet = true
+			}
+			routerOverrides[routerName] = ro
+			continue
+		}
+
+		hostName, field, ok := parseNamedLabel(key, labelDexdHostsPrefix)
 		if !ok {
 			continue
 		}
-		if legacy {
-			existing := routerOverrides[routerName]
-			if (field == "target" && existing.targetSet) || (field == "skip" && existing.skipSet) {
-				continue
-			}
-		}
-
-		ro := routerOverrides[routerName]
+		block := hostBlocks[hostName]
 		switch field {
+		case "hostnames":
+			block.hostnames = parseHostnameList(val)
+			block.hostnamesSet = true
 		case "target":
-			ro.target = val
-			ro.targetSet = true
+			block.target = val
+			block.targetSet = true
 		case "skip":
-			ro.skip = isTrue(val)
-			ro.skipSet = true
+			block.skip = isTrue(val)
+			block.skipSet = true
+		default:
+			continue
 		}
-		routerOverrides[routerName] = ro
+		hostBlocks[hostName] = block
 	}
 
-	routerNames := make([]string, 0, len(routerRules))
-	for name := range routerRules {
-		routerNames = append(routerNames, name)
+	appendEndpoint := func(endpoints []*Endpoint, dnsName, target, recordType, resource string) []*Endpoint {
+		if strings.Contains(dnsName, "${") {
+			// compose-time variable not substituted — skip
+			slog.Debug("skipping unresolved variable in hostname", "value", dnsName)
+			return endpoints
+		}
+		return append(endpoints, &Endpoint{
+			DNSName:    dnsName,
+			Target:     target,
+			RecordType: recordType,
+			OwnerID:    ownerID,
+			Resource:   resource,
+		})
 	}
-	sort.Strings(routerNames)
 
 	var endpoints []*Endpoint
-	for _, routerName := range routerNames {
+
+	hostBlockNames := make([]string, 0, len(hostBlocks))
+	for name := range hostBlocks {
+		hostBlockNames = append(hostBlockNames, name)
+	}
+	sort.Strings(hostBlockNames)
+
+	for _, blockName := range hostBlockNames {
+		block := hostBlocks[blockName]
+		if block.skip {
+			continue
+		}
+		if !block.hostnamesSet || len(block.hostnames) == 0 {
+			slog.Debug("standalone host block has no hostnames", "block", blockName, "container", containerName)
+			continue
+		}
+
+		target := defaultTarget
+		if containerTarget != "" {
+			target = containerTarget
+		}
+		if block.target != "" {
+			target = block.target
+		}
+		recordType := detectRecordType(target)
+		resource := fmt.Sprintf("docker/%s/hosts/%s", containerName, blockName)
+		for _, host := range block.hostnames {
+			endpoints = appendEndpoint(endpoints, host, target, recordType, resource)
+		}
+	}
+
+	for _, routerName := range sortedKeys(routerRules) {
 		rule := routerRules[routerName]
 		ro := routerOverrides[routerName]
 		if ro.skip {
@@ -104,21 +184,14 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 		}
 
 		recordType := detectRecordType(target)
+		hostnames := ro.hostnames
+		if !ro.hostnamesSet {
+			hostnames = hostnamesFromRule(rule)
+		}
+		hostnames = append(hostnames, ro.extraHostnames...)
 
-		for _, match := range hostExtract.FindAllStringSubmatch(rule, -1) {
-			host := match[1]
-			if strings.Contains(host, "${") {
-				// compose-time variable not substituted — skip
-				slog.Debug("skipping unresolved variable in host", "router", routerName, "value", host)
-				continue
-			}
-			endpoints = append(endpoints, &Endpoint{
-				DNSName:    host,
-				Target:     target,
-				RecordType: recordType,
-				OwnerID:    ownerID,
-				Resource:   fmt.Sprintf("docker/%s", containerName),
-			})
+		for _, host := range uniqueStrings(hostnames) {
+			endpoints = appendEndpoint(endpoints, host, target, recordType, fmt.Sprintf("docker/%s", containerName))
 		}
 	}
 
@@ -128,6 +201,48 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 	}
 
 	return endpoints
+}
+
+func hostnamesFromRule(rule string) []string {
+	matches := hostExtract.FindAllStringSubmatch(rule, -1)
+	hostnames := make([]string, 0, len(matches))
+	for _, match := range matches {
+		hostnames = append(hostnames, match[1])
+	}
+	return hostnames
+}
+
+func parseHostnameList(value string) []string {
+	var hostnames []string
+	for _, raw := range strings.Split(value, ",") {
+		hostname := strings.TrimSpace(raw)
+		if hostname != "" {
+			hostnames = append(hostnames, hostname)
+		}
+	}
+	return hostnames
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func enabled(labels map[string]string) bool {
@@ -147,27 +262,32 @@ func firstLabelValue(labels map[string]string, keys ...string) string {
 }
 
 func parseRouterLabel(key string) (name, field string, legacy, ok bool) {
-	rest, ok := strings.CutPrefix(key, labelDexdRouterPrefix)
+	name, field, ok = parseNamedLabel(key, labelDexdRouterPrefix)
 	if !ok {
-		rest, ok = strings.CutPrefix(key, labelLegacyExternalDNSRouterPrefix)
+		name, field, ok = parseNamedLabel(key, labelLegacyExternalDNSRouterPrefix)
 		legacy = ok
 	}
+	return name, field, legacy, ok
+}
+
+func parseNamedLabel(key, prefix string) (name, field string, ok bool) {
+	rest, ok := strings.CutPrefix(key, prefix)
 	if !ok {
-		return "", "", false, false
+		return "", "", false
 	}
 	idx := strings.LastIndex(rest, ".")
 	if idx < 0 {
-		return "", "", false, false
+		return "", "", false
 	}
 	name, field = rest[:idx], rest[idx+1:]
 	if name == "" || field == "" {
-		return "", "", false, false
+		return "", "", false
 	}
 	switch field {
-	case "target", "skip":
-		return name, field, legacy, true
+	case "target", "skip", "hostnames", "extra-hostnames":
+		return name, field, true
 	default:
-		return "", "", false, false
+		return "", "", false
 	}
 }
 

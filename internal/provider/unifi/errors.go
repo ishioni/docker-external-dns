@@ -47,6 +47,16 @@ func (e *DataError) Unwrap() error {
 	return e.Err
 }
 
+type UnsupportedRecordError struct {
+	Key        string
+	RecordType string
+	Reason     string
+}
+
+func (e *UnsupportedRecordError) Error() string {
+	return fmt.Sprintf("unsupported unifi DNS record %s %s: %s", e.RecordType, e.Key, e.Reason)
+}
+
 type errorResponse struct {
 	Code      string         `json:"code"`
 	Details   map[string]any `json:"details"`

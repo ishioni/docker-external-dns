@@ -170,6 +170,29 @@ func TestReconcileWithUniFiClient_TXTFailurePreventsRecordCreate(t *testing.T) {
 	}
 }
 
+func TestReconcileWithUniFiClient_SkipsWildcardCNAMEAndContinues(t *testing.T) {
+	api := newControllerUniFiAPI(t)
+	src := &fakeSource{endpoints: []*source.Endpoint{
+		epType("foo.example.com", "target.example.com", "CNAME"),
+		epType("*.foo.example.com", "target.example.com", "CNAME"),
+	}}
+
+	New(src, api.provider(), testOwner, "", config.PolicySync, time.Hour).reconcile(context.Background())
+
+	if idx := httpCallIndex(api.calls, http.MethodPost, "*.foo.example.com"); idx >= 0 {
+		t.Fatalf("wildcard CNAME was created, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "cname-*.foo.example.com"); idx >= 0 {
+		t.Fatalf("wildcard CNAME TXT was created, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "foo.example.com"); idx < 0 {
+		t.Fatalf("non-wildcard CNAME was not created, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "cname-foo.example.com"); idx < 0 {
+		t.Fatalf("non-wildcard CNAME TXT was not created, calls: %+v", api.calls)
+	}
+}
+
 func assertHTTPBefore(t *testing.T, calls []unifiHTTPCall, firstMethod, firstKey, secondMethod, secondKey string) {
 	t.Helper()
 	first := httpCallIndex(calls, firstMethod, firstKey)

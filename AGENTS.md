@@ -3,7 +3,7 @@
 This file documents the implementation status, design decisions, known gaps, and
 suggested next steps. Update it as work progresses.
 
-## Status: v0.10 — dexd rename (2026-05-11)
+## Status: v0.3 — dexd rename (2026-05-11)
 
 The core pipeline is implemented and covered by an automated test suite (`go test -race ./...`). It now supports A and CNAME records, container-level target/type defaults, per-Traefik-router target/type/skip overrides, strict UniFi HTTP contract tests that exercise the real UniFi client against an in-process API simulator, external-dns-style change policies, Prometheus metrics on `/metrics`, and the `dexd` project/binary/label identity.
 
@@ -78,10 +78,22 @@ Per-router overrides are matched by router name from `traefik.http.routers.<name
 
 ```yaml
 dexd.routers.<name>.target: "<ip-or-hostname>"
+dexd.routers.<name>.hostnames: "<hostname>[,<hostname>...]"        # replaces parsed Host() names
+dexd.routers.<name>.extra-hostnames: "<hostname>[,<hostname>...]"  # appends to parsed Host() names
 dexd.routers.<name>.skip: "true"
 ```
 
-Precedence per router: per-router override → container-level → global default (`DEFAULT_TARGET`). Record type is auto-detected from whichever target wins.
+Standalone host blocks create records that are not tied to Traefik router labels:
+
+```yaml
+dexd.hosts.<name>.hostnames: "<hostname>[,<hostname>...]"
+dexd.hosts.<name>.target: "<ip-or-hostname>"
+dexd.hosts.<name>.skip: "true"
+```
+
+Precedence per router: `skip=true` → `hostnames` override or parsed `Host()` names + `extra-hostnames` → per-router target → container-level target → global default (`DEFAULT_TARGET`). Precedence per standalone block: `skip=true` → `hostnames` → block target → container-level target → global default. Record type is auto-detected from whichever target wins.
+
+UniFi does not support wildcard CNAME records. The UniFi provider rejects `*.example.com` + `CNAME` as unsupported; the controller logs a warning, increments `dexd_provider_errors_total{type="unsupported"}`, skips that record, and continues applying supported records.
 
 ## Wire format reference
 
@@ -104,7 +116,7 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 
 | Package | What it covers |
 |---|---|
-| `internal/source` | Label → endpoint extraction: enable-flag gating, `dexd.*` label vocabulary with legacy `external-dns.*` aliases, single/multi `Host()`, `\|\|` joining, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging, container/router target and record-type overrides, router skip. |
+| `internal/source` | Label → endpoint extraction: enable-flag gating, `dexd.*` label vocabulary with legacy `external-dns.*` aliases, standalone host blocks, single/multi `Host()`, `\|\|` joining, router hostname override/append labels, `HostRegexp` skip, unsubstituted `${VAR}` skip, multi-router merging, container/router target and record-type overrides, router skip. |
 | `internal/registry` | `TXTKey` and `ParseTXTKey` formatting/parsing, `EncodeTXT` always quoted, `DecodeTXT` round-trip + quote stripping, rejects non-heritage values, `IsOwnedBy` cross-owner matrix. |
 | `internal/plan` | All Create/Update/Delete/Replace branches for A and CNAME plus the three safety rules: no update without our TXT, no update if TXT belongs to another owner, no delete without our TXT. |
 | `internal/provider/unifi` | HTTP wire format: list shape, `_id`, `X-Api-Key`, `Accept`, `Content-Type`, A/CNAME omit `ttl` for auto or include configured numeric TTL, **TXT omits `ttl`**, PUT/DELETE URLs, typed API/network/data errors, dry-run makes no mutation calls. |
@@ -115,7 +127,7 @@ Run with `make test` or `go test -race ./...`. All tests use stdlib only (no tes
 ## Known gaps / future work
 
 - [x] **UniFi response validation**: strict tests now cover lower-case UniFi JSON fields, `_id` record IDs, request headers, TTL behavior, UniFi-style error JSON, invalid JSON, and controller flows through the real UniFi client.
-- [ ] **Standalone non-Traefik hosts**: add explicit labels such as
+- [x] **Standalone non-Traefik hosts**: add explicit labels such as
       `dexd.hosts.<name>.*` for endpoints that do not have Traefik
       router rules.
 - [x] **Prometheus metrics**: `/metrics` exports reconcile totals/duration/last success, reconcile errors, plan gauges, change counters, source errors/events, provider request metrics, provider errors, and build info.

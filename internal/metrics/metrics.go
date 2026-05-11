@@ -214,6 +214,10 @@ func IncDockerEvent(action string) {
 	dockerEventsTotal.WithLabelValues(action).Inc()
 }
 
+func IncProviderError(errType string) {
+	providerErrorsTotal.WithLabelValues(errType).Inc()
+}
+
 func ObserveProviderRequest(method string, statusCode int, duration time.Duration, errType string) {
 	result := "success"
 	status := strconv.Itoa(statusCode)

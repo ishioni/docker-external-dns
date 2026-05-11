@@ -150,6 +150,39 @@ labels:
   # console.example.com → CNAME (hostname override)
 ```
 
+Per-router hostname overrides can replace or extend hostnames parsed from
+Traefik `Host(...)` rules:
+
+```yaml
+labels:
+  dexd.enabled: "true"
+  traefik.http.routers.rustfs.rule: Host(`${S3_HOST}`) || HostRegexp(`^.+\.${S3_HOST}$`)
+  dexd.routers.rustfs.extra-hostnames: "*.${S3_HOST}"
+```
+
+Use `dexd.routers.<name>.hostnames` to replace parsed hostnames entirely, or
+`dexd.routers.<name>.extra-hostnames` to append comma-separated names. Router
+`skip=true` wins over hostnames, extra hostnames, and target overrides.
+
+Standalone host blocks create records that are not tied to Traefik router
+labels:
+
+```yaml
+labels:
+  dexd.enabled: "true"
+  dexd.hosts.dashboard.hostnames: "traefik.${DOMAIN}"
+  dexd.hosts.dashboard.target: "10.1.2.241"
+```
+
+`dexd.hosts.<name>.target` is optional and falls back to container-level
+`dexd.target`, then `DEFAULT_TARGET`. `dexd.hosts.<name>.skip=true` skips the
+whole standalone block, including all configured hostnames.
+
+UniFi does not support wildcard CNAME records. If a hostname such as
+`*.example.com` resolves to a CNAME target, `dexd` logs a warning, increments
+the provider error metric with `type="unsupported"`, skips that record, and
+continues applying supported records.
+
 ### Rename compatibility
 
 `dexd` still accepts the old `external-dns.*` Docker labels as compatibility

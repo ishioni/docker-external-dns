@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"time"
 
 	appmetrics "github.com/ishioni/dexd/internal/metrics"
@@ -44,6 +45,18 @@ func NewClient(host, apiKey, site string, insecureSkipVerify, dryRun bool, defau
 		dryRun:     dryRun,
 		defaultTTL: defaultTTL,
 	}
+}
+
+// ValidateRecord rejects records UniFi static DNS cannot represent.
+func (c *Client) ValidateRecord(r DNSRecord) error {
+	if r.RecordType == "CNAME" && strings.HasPrefix(r.Key, "*.") {
+		return &UnsupportedRecordError{
+			Key:        r.Key,
+			RecordType: r.RecordType,
+			Reason:     "UniFi does not support wildcard CNAME records",
+		}
+	}
+	return nil
 }
 
 // ListRecords returns all static DNS records from the controller.
