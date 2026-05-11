@@ -93,7 +93,7 @@ dexd.hosts.<name>.skip: "true"
 
 Precedence per router: `skip=true` → `hostnames` override or parsed `Host()` names + `extra-hostnames` → per-router target → container-level target → global default (`DEFAULT_TARGET`). Precedence per standalone block: `skip=true` → `hostnames` → block target → container-level target → global default. Record type is auto-detected from whichever target wins.
 
-UniFi does not support wildcard CNAME records. The UniFi provider rejects `*.example.com` + `CNAME` as unsupported; the controller logs a warning, increments `dexd_provider_errors_total{type="unsupported"}`, skips that record, and continues applying supported records.
+UniFi does not support wildcard CNAME records. The UniFi provider rejects `*.example.com` + `CNAME` as unsupported; the controller logs a warning, increments `dexd_provider_errors_total{type="unsupported"}`, skips that record, and continues applying supported records. Wildcard A records are supported, but their TXT ownership key encodes `*` as `wildcard-dexd` because UniFi rejects `*` in TXT hostnames.
 
 ## Wire format reference
 

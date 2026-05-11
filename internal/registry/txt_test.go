@@ -14,6 +14,7 @@ func TestTXTKey(t *testing.T) {
 		{"", "CNAME", "x.y.z", "cname-x.y.z"},
 		{"userprefix.", "A", "db.example.com", "userprefix.a-db.example.com"},
 		{"userprefix.", "CNAME", "app.example.com", "userprefix.cname-app.example.com"},
+		{"leo.", "A", "*.rs3.example.com", "leo.a-wildcard-dexd.rs3.example.com"},
 	}
 	for _, c := range cases {
 		if got := TXTKey(c.prefix, c.recordType, c.dnsName); got != c.want {
@@ -31,6 +32,7 @@ func TestHostnameFromTXTKey(t *testing.T) {
 		{"", "A", "a-foo.example.com", "foo.example.com", true},
 		{"userprefix.", "A", "userprefix.a-db.example.com", "db.example.com", true},
 		{"userprefix.", "CNAME", "userprefix.cname-app.example.com", "app.example.com", true},
+		{"leo.", "A", "leo.a-wildcard-dexd.rs3.example.com", "*.rs3.example.com", true},
 		// key doesn't carry the expected prefix — only ok matters
 		{"userprefix.", "A", "a-foo.example.com", "", false},
 		{"", "A", "userprefix.a-foo.example.com", "", false},
@@ -83,6 +85,14 @@ func TestParseTXTKey(t *testing.T) {
 			txtKey:   "talos.cname-foo.example.com",
 			wantType: "CNAME",
 			wantHost: "foo.example.com",
+			wantOK:   true,
+		},
+		{
+			name:     "wildcard A with prefix",
+			prefix:   "leo.",
+			txtKey:   "leo.a-wildcard-dexd.rs3.example.com",
+			wantType: "A",
+			wantHost: "*.rs3.example.com",
 			wantOK:   true,
 		},
 		{
