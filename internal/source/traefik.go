@@ -204,8 +204,9 @@ func EndpointsFromLabels(containerName string, labels map[string]string, default
 }
 
 func hostnamesFromRule(rule string) []string {
-	var hostnames []string
-	for _, match := range hostExtract.FindAllStringSubmatch(rule, -1) {
+	matches := hostExtract.FindAllStringSubmatch(rule, -1)
+	hostnames := make([]string, 0, len(matches))
+	for _, match := range matches {
 		hostnames = append(hostnames, match[1])
 	}
 	return hostnames
