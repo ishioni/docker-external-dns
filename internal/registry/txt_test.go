@@ -126,7 +126,7 @@ func TestEncodeTXT_IsQuoted(t *testing.T) {
 }
 
 func TestDecodeTXT_RoundTrip(t *testing.T) {
-	const owner = "docker-external-dns"
+	const owner = "dexd"
 	const resource = "docker/whoami"
 
 	rec, ok := DecodeTXT(EncodeTXT(owner, resource))

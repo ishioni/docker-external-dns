@@ -3,9 +3,9 @@ package plan
 import (
 	"testing"
 
-	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
-	"github.com/ishioni/docker-external-dns/internal/registry"
-	"github.com/ishioni/docker-external-dns/internal/source"
+	"github.com/ishioni/dexd/internal/provider/unifi"
+	"github.com/ishioni/dexd/internal/registry"
+	"github.com/ishioni/dexd/internal/source"
 )
 
 const ownerID = "us"

@@ -6,9 +6,9 @@ package plan
 import (
 	"log/slog"
 
-	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
-	"github.com/ishioni/docker-external-dns/internal/registry"
-	"github.com/ishioni/docker-external-dns/internal/source"
+	"github.com/ishioni/dexd/internal/provider/unifi"
+	"github.com/ishioni/dexd/internal/registry"
+	"github.com/ishioni/dexd/internal/source"
 )
 
 // Changes holds the buckets of DNS work to perform.

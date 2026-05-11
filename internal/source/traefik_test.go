@@ -37,10 +37,19 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: nil,
 		},
 		{
-			name:      "only external-dns enable",
+			name:      "only legacy external-dns enable",
 			container: "c1",
 			labels: map[string]string{
 				"external-dns.enabled":          "true",
+				"traefik.http.routers.foo.rule": "Host(`foo.example.com`)",
+			},
+			want: []endpointWant{{DNSName: "foo.example.com", Target: defaultTarget, RecordType: "A"}},
+		},
+		{
+			name:      "only dexd enable",
+			container: "c1",
+			labels: map[string]string{
+				"dexd.enabled":                  "true",
 				"traefik.http.routers.foo.rule": "Host(`foo.example.com`)",
 			},
 			want: []endpointWant{{DNSName: "foo.example.com", Target: defaultTarget, RecordType: "A"}},
@@ -142,6 +151,17 @@ func TestEndpointsFromLabels(t *testing.T) {
 			want: []endpointWant{{DNSName: "foo.example.com", Target: "traefik.example.com", RecordType: "CNAME"}},
 		},
 		{
+			name:      "dexd target beats legacy target",
+			container: "c1",
+			labels: map[string]string{
+				"dexd.enabled":                  "true",
+				"dexd.target":                   "10.8.8.8",
+				"external-dns.target":           "10.9.8.7",
+				"traefik.http.routers.foo.rule": "Host(`foo.example.com`)",
+			},
+			want: []endpointWant{{DNSName: "foo.example.com", Target: "10.8.8.8", RecordType: "A"}},
+		},
+		{
 			name:      "router target beats container and default",
 			container: "c1",
 			labels: map[string]string{
@@ -155,6 +175,17 @@ func TestEndpointsFromLabels(t *testing.T) {
 				{DNSName: "bar.example.com", Target: "10.9.8.7", RecordType: "A"},
 				{DNSName: "foo.example.com", Target: "10.1.1.9", RecordType: "A"},
 			},
+		},
+		{
+			name:      "dexd router target beats legacy router target",
+			container: "c1",
+			labels: map[string]string{
+				"dexd.enabled":                    "true",
+				"dexd.routers.foo.target":         "10.8.8.8",
+				"external-dns.routers.foo.target": "10.9.8.7",
+				"traefik.http.routers.foo.rule":   "Host(`foo.example.com`)",
+			},
+			want: []endpointWant{{DNSName: "foo.example.com", Target: "10.8.8.8", RecordType: "A"}},
 		},
 		{
 			name:      "router override supports dotted router names",
@@ -190,6 +221,17 @@ func TestEndpointsFromLabels(t *testing.T) {
 				"traefik.http.routers.bar.rule": "Host(`bar.example.com`)",
 			},
 			want: []endpointWant{{DNSName: "bar.example.com", Target: defaultTarget, RecordType: "A"}},
+		},
+		{
+			name:      "dexd router skip beats legacy router skip",
+			container: "c1",
+			labels: map[string]string{
+				"dexd.enabled":                  "true",
+				"dexd.routers.foo.skip":         "false",
+				"external-dns.routers.foo.skip": "true",
+				"traefik.http.routers.foo.rule": "Host(`foo.example.com`)",
+			},
+			want: []endpointWant{{DNSName: "foo.example.com", Target: defaultTarget, RecordType: "A"}},
 		},
 		{
 			name:      "rustfs style mixed routers: IP default + hostname override",

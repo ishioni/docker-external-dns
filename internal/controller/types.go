@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	"github.com/ishioni/docker-external-dns/internal/provider/unifi"
-	"github.com/ishioni/docker-external-dns/internal/source"
+	"github.com/ishioni/dexd/internal/provider/unifi"
+	"github.com/ishioni/dexd/internal/source"
 )
 
 // Event is a lightweight, source-agnostic notification that desired

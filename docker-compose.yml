@@ -1,10 +1,10 @@
 ---
-# docker-external-dns — manages UniFi static DNS records for Traefik containers.
+# dexd — manages UniFi static DNS records for Traefik containers.
 # Deploy this alongside Traefik on your Docker host.
 services:
-  docker-external-dns:
+  dexd:
     build: .
-    container_name: docker-external-dns
+    container_name: dexd
     restart: unless-stopped
     environment:
       # Required

@@ -5,12 +5,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ishioni/docker-external-dns/internal/config"
+	"github.com/ishioni/dexd/internal/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const namespace = "docker_external_dns"
+const namespace = "dexd"
 
 var (
 	reconcileTotal = prometheus.NewCounterVec(
@@ -140,7 +140,7 @@ var (
 		prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "build_info",
-			Help:      "Build and configuration information for docker-external-dns.",
+			Help:      "Build and configuration information for dexd.",
 		},
 		[]string{"version", "gitsha", "policy", "provider"},
 	)

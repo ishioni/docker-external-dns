@@ -12,7 +12,7 @@ import (
 	"net/http/cookiejar"
 	"time"
 
-	appmetrics "github.com/ishioni/docker-external-dns/internal/metrics"
+	appmetrics "github.com/ishioni/dexd/internal/metrics"
 )
 
 // Client talks to the UniFi OS static-dns REST API.

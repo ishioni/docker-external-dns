@@ -42,8 +42,8 @@ func (f *fakeDockerClient) Close() error { return nil }
 
 func inScopeContainer(id, name string, extraLabels map[string]string) container.Summary {
 	labels := map[string]string{
-		"traefik.enable":       "true",
-		"external-dns.enabled": "true",
+		"traefik.enable": "true",
+		"dexd.enabled":   "true",
 	}
 	for k, v := range extraLabels {
 		labels[k] = v
@@ -101,7 +101,7 @@ func TestEndpoints_AggregatesAcrossContainers(t *testing.T) {
 			inScopeContainer("id2", "svc-b", map[string]string{
 				"traefik.http.routers.b.rule": "Host(`b.example.com`)",
 			}),
-			// out-of-scope: missing external-dns label
+			// out-of-scope: missing dexd label
 			{ID: "id3", Names: []string{"/svc-c"}, Labels: map[string]string{
 				"traefik.enable":              "true",
 				"traefik.http.routers.c.rule": "Host(`c.example.com`)",
@@ -149,7 +149,7 @@ func TestEndpoints_FallsBackToIDWhenNamesEmpty(t *testing.T) {
 				Names: nil,
 				Labels: map[string]string{
 					"traefik.enable":              "true",
-					"external-dns.enabled":        "true",
+					"dexd.enabled":                "true",
 					"traefik.http.routers.x.rule": "Host(`x.example.com`)",
 				},
 			},

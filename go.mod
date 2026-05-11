@@ -1,4 +1,4 @@
-module github.com/ishioni/docker-external-dns
+module github.com/ishioni/dexd
 
 go 1.26.2
 
