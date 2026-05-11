@@ -181,7 +181,9 @@ whole standalone block, including all configured hostnames.
 UniFi does not support wildcard CNAME records. If a hostname such as
 `*.example.com` resolves to a CNAME target, `dexd` logs a warning, increments
 the provider error metric with `type="unsupported"`, skips that record, and
-continues applying supported records.
+continues applying supported records. Wildcard A records are supported; their
+ownership TXT record replaces the `*` label with `wildcard-dexd` so UniFi
+accepts the TXT hostname.
 
 ### Rename compatibility
 

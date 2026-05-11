@@ -193,6 +193,32 @@ func TestReconcileWithUniFiClient_SkipsWildcardCNAMEAndContinues(t *testing.T) {
 	}
 }
 
+func TestReconcileWithUniFiClient_CreatesWildcardAWithEncodedTXT(t *testing.T) {
+	api := newControllerUniFiAPI(t)
+	src := &fakeSource{endpoints: []*source.Endpoint{
+		ep("foo.example.com", "10.0.0.1"),
+		ep("*.foo.example.com", "10.0.0.1"),
+	}}
+
+	New(src, api.provider(), testOwner, "leo.", config.PolicySync, time.Hour).reconcile(context.Background())
+
+	if idx := httpCallIndex(api.calls, http.MethodPost, "leo.a-*.foo.example.com"); idx >= 0 {
+		t.Fatalf("wildcard A TXT used raw asterisk, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "leo.a-wildcard-dexd.foo.example.com"); idx < 0 {
+		t.Fatalf("wildcard A TXT was not created with encoded wildcard, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "*.foo.example.com"); idx < 0 {
+		t.Fatalf("wildcard A was not created, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "foo.example.com"); idx < 0 {
+		t.Fatalf("non-wildcard A was not created, calls: %+v", api.calls)
+	}
+	if idx := httpCallIndex(api.calls, http.MethodPost, "leo.a-foo.example.com"); idx < 0 {
+		t.Fatalf("non-wildcard A TXT was not created, calls: %+v", api.calls)
+	}
+}
+
 func assertHTTPBefore(t *testing.T, calls []unifiHTTPCall, firstMethod, firstKey, secondMethod, secondKey string) {
 	t.Helper()
 	first := httpCallIndex(calls, firstMethod, firstKey)
