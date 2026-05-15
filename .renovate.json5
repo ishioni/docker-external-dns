@@ -1,0 +1,30 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':disableRateLimiting',
+    'customManagers:biomeVersions',
+    "helpers:pinGitHubActionDigests",
+    ":automergePr",
+    ":automergeDigest",
+    ":dependencyDashboard",
+    ":renovatePrefix",
+    ":semanticCommits",
+    ":timezone(Europe/Warsaw)",
+  ],
+  postUpdateOptions: [
+    'gomodTidy',
+    'gomodUpdateImportPaths',
+  ],
+  packageRules: [
+    {
+      description: "Auto-merge GitHub Actions",
+      matchManagers: ["github-actions"],
+      automerge: true,
+      automergeType: "branch",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      ignoreTests: true,
+    },
+  ],
+  dependencyDashboardTitle: "Renovate Dashboard 🤖",
+}
